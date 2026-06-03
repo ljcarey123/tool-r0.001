@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tool-r0"
+version = "0.1.0"
+description = "Tool-R0: Self-Evolving LLM Agents for Tool-Learning from Zero Data"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.1.0",
+    "transformers>=4.40.0",
+    "trl>=0.15.0",
+    "pydantic>=2.0.0",
+    "datasets>=2.18.0",
+    "accelerate>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "pyright>=1.1.0",
+]
+
+[project.scripts]
+tool-r0 = "tool_r0.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

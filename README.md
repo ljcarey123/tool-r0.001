@@ -1,0 +1,118 @@
+# Tool-R0
+
+A reimplementation of [Tool-R0: Self-Evolving LLM Agents for Tool-Learning from Zero Data](https://arxiv.org/pdf/2602.21320), incorporating reward design findings from the companion [ToolRL paper](https://arxiv.org/html/2504.13958v1).
+
+## What this is
+
+Tool-R0 trains a tool-calling agent from **zero annotated data** using self-play reinforcement learning. A Generator model proposes realistic tasks; a Solver model learns to answer them by selecting the right tools and parameters. Both models co-evolve via GRPO — no human labels, no SFT warm-up.
+
+The paper reports a **92.5% relative improvement** over the Qwen2.5-1.5B base model on standard tool-calling benchmarks.
+
+## Architecture
+
+```
+registry (tool schemas)
+    │
+    ▼
+GeneratorAgent  ──GRPO──►  evolving generator
+    │ TaskSpec → GeneratedTask (question + available_tools + gold_calls)
+    │
+    ▼
+TaskPool  (deduplicate → cross-verify difficulty → sort easy→hard)
+    │
+    ▼
+SolverAgent  ──GRPO──►  evolving solver
+```
+
+### Reward functions
+
+**Generator rewards** (3 binary criteria, weighted per paper Table 1):
+
+| Criterion | Weight | Passes when |
+|-----------|--------|-------------|
+| `I_tag`   | 0.3    | All four required XML tags are present |
+| `I_parse` | 0.3    | `<available_tools>` hydrates into valid `Tool` objects |
+| `I_norm`  | 0.4    | `<tool_call_answer>` hydrates into valid `ToolCall` objects |
+
+Plus a **validity reward** (tool-in-menu + required params + value plausibility) and a **curriculum reward** (band-pass [0.25, 0.75] so tasks are neither trivial nor impossible).
+
+**Solver rewards** (per ToolRL paper):
+
+- **Format**: binary 0/1 — `<think>` present + parseable tool calls.
+- **Accuracy**: greedy name match → Jaccard on name + key + value exact, normalised to [−3, 3], with a penalty for extra calls (`α = 0.25`).
+
+### Key hyperparameters
+
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Base model | `Qwen/Qwen2.5-1.5B-Instruct` | Tool-R0 paper |
+| GRPO β (KL penalty) | 0.0 | ToolRL finding: KL hurts |
+| MC samples per task | 8 | Tool-R0 curriculum |
+| Curriculum band | [0.25, 0.75] | Tool-R0 Section 3.3 |
+| Extra-call penalty α | 0.25 | ToolRL accuracy reward |
+
+## Project layout
+
+```
+src/tool_r0/
+├── config.py          # Config dataclass — all hyperparameters
+├── main.py            # CLI entry point
+├── loop.py            # SelfPlayLoop — outer training loop
+├── agents/
+│   ├── generator.py   # GeneratorAgent
+│   ├── solver.py      # SolverAgent
+│   └── parser.py      # XML tag extraction + output parsing
+├── rewards/
+│   ├── format.py      # Format rewards (generator + solver)
+│   ├── validity.py    # Generator validity reward
+│   ├── curriculum.py  # Curriculum band-pass reward
+│   └── accuracy.py    # Solver accuracy reward
+├── tools/
+│   ├── schema.py      # Tool + ToolCall pydantic models
+│   ├── registry.py    # ToolRegistry (schema-only, no execution)
+│   └── builtins.py    # Default 4-tool registry
+└── data/
+    ├── models.py      # TaskSpec, GeneratedTask, SolverExample
+    └── pool.py        # TaskPool — dedup, cross-verify, curriculum build
+```
+
+## Setup
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux/macOS
+
+pip install -e ".[dev]"
+```
+
+## Run
+
+```bash
+# Full training loop
+tool-r0 train
+
+# With custom config overrides (edit src/tool_r0/config.py)
+tool-r0 train --model Qwen/Qwen2.5-0.5B-Instruct
+```
+
+## Tests
+
+```bash
+pytest                    # all tests
+pytest tests/unit/        # unit only (no GPU needed)
+pytest tests/integration/ # integration (mocked models)
+```
+
+## Phases
+
+- **Phase 1** *(current)*: Core self-play loop — Generator + Solver co-evolving via GRPO. No tool execution; reward is structural JSON matching only.
+- **Phase 2**: Benchmark evaluation on ToolBench / APIBench / BFCL.
+- **Phase 3**: Multi-step tool use (chained calls, dependency graphs).
+
+See [Phases.md](Phases.md) for detailed plans.
+
+## References
+
+- [Tool-R0 paper](https://arxiv.org/pdf/2602.21320): Self-Evolving LLM Agents for Tool-Learning from Zero Data
+- [ToolRL paper](https://arxiv.org/html/2504.13958v1): When Tool Use Gets Better with Reinforcement Learning
