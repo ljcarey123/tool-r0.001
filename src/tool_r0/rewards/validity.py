@@ -25,21 +25,21 @@ def validity_reward(task: GeneratedTask) -> float:
     for call in task.gold_calls:
         score = 0.0
 
-        # 1. Tool name in menu
+        # 1. Tool name in menu (weight 0.4 — per paper's reward_validity_accuracy)
         if call.name not in tool_map:
             per_call_scores.append(0.0)
             continue
-        score += 1 / 3
+        score += 0.4
 
         tool = tool_map[call.name]
         required_params = tool.parameters.get("required", [])
         properties = tool.parameters.get("properties", {})
 
-        # 2. Required parameters present
+        # 2. Required parameters present (weight 0.4)
         if all(p in call.parameters for p in required_params):
-            score += 1 / 3
+            score += 0.4
 
-        # 3. Non-trivial string values appear in the question
+        # 3. Non-trivial string values appear in the question (weight 0.2)
         trivial_types = {"boolean", "integer", "number"}
         non_trivial_values = [
             str(v)
@@ -49,12 +49,12 @@ def validity_reward(task: GeneratedTask) -> float:
             and properties.get(k, {}).get("type") not in trivial_types
         ]
         if not non_trivial_values:
-            score += 1 / 3  # nothing to check — full credit
+            score += 0.2  # nothing to check — full credit
         elif all(
             re.search(rf"\b{re.escape(v.lower())}\b", question_lower)
             for v in non_trivial_values
         ):
-            score += 1 / 3
+            score += 0.2
 
         per_call_scores.append(score)
 

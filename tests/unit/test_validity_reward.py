@@ -39,20 +39,24 @@ class TestValidityReward:
         task = _make_task("What is 2 + 2?", [tool], [call])
         assert validity_reward(task) == pytest.approx(0.0)
 
-    def test_missing_required_param_loses_one_third(self):
+    def test_missing_required_param_loses_0_4(self):
+        # Weights: name=0.4, required-params=0.4, values=0.2
         tool = _make_tool("calculator", ["expression"])
         call = ToolCall(name="calculator", parameters={})  # missing expression
         task = _make_task("What is 2 + 2?", [tool], [call])
         score = validity_reward(task)
-        assert score == pytest.approx(1 / 3 + 1 / 3, abs=1e-6)  # name ok, req missing, val ok
+        # name ok (0.4) + req missing (0.0) + no non-trivial values (0.2) = 0.6
+        assert score == pytest.approx(0.6, abs=1e-6)
 
-    def test_value_not_in_question_loses_one_third(self):
+    def test_value_not_in_question_loses_0_2(self):
+        # Weights: name=0.4, required-params=0.4, values=0.2
         tool = _make_tool("calculator", ["expression"])
         call = ToolCall(name="calculator", parameters={"expression": "999 + 888"})
         # Question doesn't contain "999" or "888"
         task = _make_task("Do some maths for me.", [tool], [call])
         score = validity_reward(task)
-        assert score == pytest.approx(2 / 3, abs=1e-6)
+        # name ok (0.4) + req ok (0.4) + value missing (0.0) = 0.8
+        assert score == pytest.approx(0.8, abs=1e-6)
 
     def test_no_gold_calls_returns_zero(self):
         tool = _make_tool("calculator", ["expression"])

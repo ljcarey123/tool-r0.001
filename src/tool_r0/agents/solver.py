@@ -10,19 +10,18 @@ from . import parser
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """\
-You are a tool-calling AI assistant.
-Given a user request and a list of available tools, select and call the correct tool(s).
-
-Output exactly these two tagged blocks — no other text:
-
-<think>
-Reason about which tool(s) to call, with what parameters, and why.
-</think>
-<tool_call_answer>
-A JSON array of tool call objects. Each must have "name" and "parameters" fields.
-</tool_call_answer>
-"""
+# Matches the paper's solver system prompt style: a single paragraph that describes
+# the task and shows the exact output format inline as a literal example.
+_SYSTEM_PROMPT = (
+    "A conversation between a user and a tool-calling assistant. "
+    "The user asks a question, and the assistant uses tools to solve it. "
+    "The assistant first thinks about the reasoning process in the mind and then provides the answer. "
+    "The reasoning process and answer are enclosed within <think></think> and "
+    "<tool_call_answer></tool_call_answer> tags, i.e., "
+    "<think>\nThis is my reasoning.\n</think>\n"
+    '<tool_call_answer>[{"name": "tool_name", "arguments": {"arg1": "value1", "arg2": "value2"}}]'
+    "</tool_call_answer>."
+)
 
 _USER_TEMPLATE = """\
 Available tools:

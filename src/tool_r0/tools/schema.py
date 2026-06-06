@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class Tool(BaseModel):
@@ -16,7 +17,16 @@ class Tool(BaseModel):
 
 class ToolCall(BaseModel):
     name: str
-    parameters: dict = {}
+    parameters: dict[str, Any] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_arguments_alias(cls, data: Any) -> Any:
+        # The paper's repo (and Qwen's pre-training) uses "arguments" as the key.
+        # Accept either spelling and normalise to "parameters".
+        if isinstance(data, dict) and "arguments" in data and "parameters" not in data:
+            data = {**data, "parameters": data["arguments"]}
+        return data
 
     def canonical(self) -> str:
         """Stable string representation for deduplication and matching."""

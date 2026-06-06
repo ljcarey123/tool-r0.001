@@ -49,6 +49,11 @@ class GRPOTrainer:
             extra = {k: kwargs[k] for k in self.extra_columns if k in kwargs}
             return reward_fn(prompts_batch, completions, **extra)  # type: ignore[return-value]
 
+        import torch
+        use_cuda = torch.cuda.is_available()
+        use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
+        use_fp16 = use_cuda and not use_bf16
+
         grpo_config = GRPOConfig(
             output_dir="./grpo_output",
             max_steps=n_steps,
@@ -58,6 +63,8 @@ class GRPOTrainer:
             max_completion_length=1024,
             learning_rate=self.config.learning_rate,
             beta=0.0,           # remove KL penalty — per ToolRL finding
+            bf16=use_bf16,
+            fp16=use_fp16,
             logging_steps=5,
             report_to="none",
             save_strategy="no",
@@ -65,6 +72,7 @@ class GRPOTrainer:
 
         trainer = TRLGRPOTrainer(
             model=self.model,
+            processing_class=self.tokenizer,
             args=grpo_config,
             reward_funcs=trl_reward_fn,  # type: ignore[arg-type]
             train_dataset=dataset,

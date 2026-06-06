@@ -7,9 +7,13 @@ from ..tools.schema import Tool, ToolCall
 
 
 def extract_tag(text: str, tag: str) -> str | None:
-    """Return the content of the first <tag>...</tag> block, or None if absent."""
-    match = re.search(rf"<{re.escape(tag)}>(.*?)</{re.escape(tag)}>", text, re.DOTALL)
-    return match.group(1).strip() if match else None
+    """Return the content of the LAST <tag>...</tag> block, or None if absent.
+
+    Taking the last occurrence matches the reference repo's behaviour — models
+    often emit an initial reasoning pass before producing a corrected final block.
+    """
+    matches = re.findall(rf"<{re.escape(tag)}>(.*?)</{re.escape(tag)}>", text, re.DOTALL)
+    return matches[-1].strip() if matches else None
 
 
 def parse_generator_output(

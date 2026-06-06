@@ -29,9 +29,10 @@ class TestExtractTag:
     def test_strips_whitespace(self):
         assert extract_tag("<think>  hi  </think>", "think") == "hi"
 
-    def test_first_match_only(self):
+    def test_returns_last_match(self):
+        # Models often re-reason and emit a corrected final block; take the last.
         text = "<think>first</think><think>second</think>"
-        assert extract_tag(text, "think") == "first"
+        assert extract_tag(text, "think") == "second"
 
 
 class TestParseGeneratorOutput:

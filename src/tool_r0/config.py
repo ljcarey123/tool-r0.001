@@ -32,9 +32,23 @@ class Config:
     # Accuracy reward
     extra_call_penalty: float = 0.25
 
-    # Task spec sampling distribution
+    # Evaluation
+    eval_set_size: int = 100   # held-out synthetic tasks generated before training starts
+
+    # Output / checkpointing
+    checkpoint_dir: str = "./checkpoints"
+
+    # Task spec sampling distribution — mirrors the 32 domains from the paper
     domains: list[str] = field(
-        default_factory=lambda: ["math", "calendar", "temperature", "text"]
+        default_factory=lambda: [
+            "finance", "travel", "math", "sports", "weather", "system", "database",
+            "vehicle_control", "communication", "entertainment", "retail_ecommerce",
+            "scheduling", "cloud_infrastructure", "geolocation", "web_search",
+            "memory_management", "programming", "iot", "social_media", "logistics",
+            "real_estate", "food_ordering", "healthcare", "education", "productivity",
+            "insurance", "cybersecurity", "legal", "government", "news", "translation",
+            "utilities",
+        ]
     )
     context_types: list[str] = field(
         default_factory=lambda: ["single-turn"]
