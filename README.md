@@ -9,7 +9,8 @@ A reimplementation of [Tool-R0: Self-Evolving LLM Agents for Tool-Learning from 
 python -m venv .venv && .venv\Scripts\activate
 pip install -e ".[dev]"
 
-# 2. Smoke-test (small model, ~20 min on GPU — add --debug to see raw generator outputs)
+# 2. Smoke-test: verify the pipeline runs end-to-end (plumbing check only — 0.5B is too
+#    small to follow the structured format, so expect 0 valid tasks and an empty curriculum)
 tool-r0 train --model Qwen/Qwen2.5-0.5B-Instruct --iterations 1 --pool-size 20 --curriculum-size 10 --generator-steps 5 --solver-steps 5 --debug
 
 # 3. Full training — paper settings (resume-safe: re-run the same command if interrupted)

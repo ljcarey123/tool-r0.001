@@ -64,7 +64,8 @@ class GeneratorAgent:
             **inputs,
             max_new_tokens=1024,
             do_sample=True,
-            temperature=self.config.grpo_temperature,
+            temperature=self.config.generation_temperature,
+            repetition_penalty=self.config.repetition_penalty,
             num_return_sequences=1,
             pad_token_id=self.tokenizer.eos_token_id,
         )

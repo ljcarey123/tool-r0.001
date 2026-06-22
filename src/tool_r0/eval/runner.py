@@ -65,6 +65,7 @@ def _greedy_generate(solver: SolverAgent, task: GeneratedTask) -> str:
         **inputs,
         max_new_tokens=512,
         do_sample=False,
+        repetition_penalty=solver.config.repetition_penalty,
         pad_token_id=solver.tokenizer.eos_token_id,
     )
     prompt_len = inputs["input_ids"].shape[1]

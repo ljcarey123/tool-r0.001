@@ -86,6 +86,7 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
             **inputs,
             max_new_tokens=512,
             do_sample=False,
+            repetition_penalty=solver.config.repetition_penalty,
             pad_token_id=solver.tokenizer.eos_token_id,
         )
         plen = inputs["input_ids"].shape[1]
