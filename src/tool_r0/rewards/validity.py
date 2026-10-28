@@ -32,8 +32,14 @@ def validity_reward(task: GeneratedTask) -> float:
         score += 0.4
 
         tool = tool_map[call.name]
+        # Generated schemas can be malformed (e.g. "required": true) — treat as empty.
         required_params = tool.parameters.get("required", [])
+        if not isinstance(required_params, list):
+            required_params = []
+        required_params = [p for p in required_params if isinstance(p, str)]
         properties = tool.parameters.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
 
         # 2. Required parameters present (weight 0.4)
         if all(p in call.parameters for p in required_params):
@@ -46,7 +52,7 @@ def validity_reward(task: GeneratedTask) -> float:
             for k, v in call.parameters.items()
             if isinstance(v, str)
             and len(str(v)) > 2
-            and properties.get(k, {}).get("type") not in trivial_types
+            and _prop_type(properties.get(k)) not in trivial_types
         ]
         if not non_trivial_values:
             score += 0.2  # nothing to check — full credit
@@ -59,3 +65,7 @@ def validity_reward(task: GeneratedTask) -> float:
         per_call_scores.append(score)
 
     return sum(per_call_scores) / len(per_call_scores)
+
+
+def _prop_type(prop: object) -> object:
+    return prop.get("type") if isinstance(prop, dict) else None

@@ -28,7 +28,7 @@ class Config:
     grpo_rollouts: int = 4
     grpo_temperature: float = 1.0   # temperature used during GRPO rollouts
     generation_temperature: float = 0.7  # temperature for inference outside of GRPO (curriculum, eval)
-    repetition_penalty: float = 1.2  # prevents degenerate looping in small models
+    repetition_penalty: float = 1.0  # >1 penalises the repeated braces/quotes/keys that JSON needs
     learning_rate: float = 5e-6
 
     # Accuracy reward

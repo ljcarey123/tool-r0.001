@@ -74,6 +74,10 @@ class TestParseGeneratorOutput:
     def test_empty_string_returns_none(self):
         assert parse_generator_output("") is None
 
+    def test_placeholder_question_returns_none(self):
+        text = VALID_GENERATOR_OUTPUT.replace("What is 12 multiplied by 7?", "...")
+        assert parse_generator_output(text) is None
+
 
 class TestParseSolverOutput:
     def test_valid_output(self):

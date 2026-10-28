@@ -74,6 +74,17 @@ class TestValidityReward:
         task = _make_task("Mark task 99 as done.", [tool], [call])
         assert validity_reward(task) == pytest.approx(1.0)
 
+    def test_malformed_schema_does_not_crash(self):
+        # Generators emit e.g. "required": true and non-dict property schemas.
+        tool = Tool(
+            name="lookup",
+            description="Lookup",
+            parameters={"type": "object", "properties": {"q": "string"}, "required": True},
+        )
+        call = ToolCall(name="lookup", parameters={"q": "weather"})
+        task = _make_task("Look up weather", [tool], [call])
+        assert validity_reward(task) == pytest.approx(1.0)
+
     def test_multiple_calls_averaged(self):
         tool = _make_tool("calculator", ["expression"])
         good_call = ToolCall(name="calculator", parameters={"expression": "3 + 4"})

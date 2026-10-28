@@ -29,6 +29,9 @@ def parse_generator_output(
 
     if not question or not tools_raw or not calls_raw:
         return None
+    # Reject placeholder questions such as "..." copied from a format template.
+    if not re.search(r"[A-Za-z]{2}", question):
+        return None
 
     try:
         tools = [Tool(**t) for t in json.loads(tools_raw)]
