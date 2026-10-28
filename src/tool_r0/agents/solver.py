@@ -6,6 +6,7 @@ import logging
 from ..config import Config
 from ..data.models import GeneratedTask
 from ..tools.schema import ToolCall
+from ..training.adapters import use_adapter
 from . import parser
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,11 @@ User request: {question}
 
 
 class SolverAgent:
-    def __init__(self, model, tokenizer, config: Config) -> None:
+    def __init__(self, model, tokenizer, config: Config, adapter: str | None = None) -> None:
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
+        self.adapter = adapter  # LoRA adapter to activate on a shared model
 
     def solve(self, task: GeneratedTask) -> list[ToolCall] | None:
         return self._sample(task, n=1)[0]
@@ -43,6 +45,21 @@ class SolverAgent:
     def solve_mc(self, task: GeneratedTask, k: int) -> list[list[ToolCall] | None]:
         """k independent stochastic samples — used for difficulty estimation."""
         return self._sample(task, n=k)
+
+    def generate_greedy(self, task: GeneratedTask, max_new_tokens: int = 512) -> str:
+        """Single greedy decode, returning raw text — used for evaluation."""
+        prompt = self.build_prompt(task)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        with use_adapter(self.model, self.adapter):
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                repetition_penalty=self.config.repetition_penalty,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+        prompt_len = inputs["input_ids"].shape[1]
+        return self.tokenizer.decode(outputs[0][prompt_len:], skip_special_tokens=True)
 
     def build_prompt(self, task: GeneratedTask) -> str:
         tools_json = json.dumps([t.to_dict() for t in task.available_tools], indent=2)
@@ -58,15 +75,16 @@ class SolverAgent:
     def _sample(self, task: GeneratedTask, n: int) -> list[list[ToolCall] | None]:
         prompt = self.build_prompt(task)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=512,
-            do_sample=True,
-            temperature=self.config.generation_temperature,
-            repetition_penalty=self.config.repetition_penalty,
-            num_return_sequences=n,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
+        with use_adapter(self.model, self.adapter):
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config.solver_max_tokens,
+                do_sample=True,
+                temperature=self.config.generation_temperature,
+                repetition_penalty=self.config.repetition_penalty,
+                num_return_sequences=n,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
         results: list[list[ToolCall] | None] = []
         prompt_len = inputs["input_ids"].shape[1]
         for output in outputs:

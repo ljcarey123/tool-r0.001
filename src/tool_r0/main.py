@@ -15,7 +15,7 @@ if sys.platform == "win32":
         return _orig_read_text(self, encoding=encoding or "utf-8", **kw)
     _pathlib.Path.read_text = _utf8_read_text  # type: ignore[method-assign]
 
-from .config import Config
+from .config import PRESETS, Config
 
 
 def _configure_logging(debug: bool) -> None:
@@ -30,7 +30,8 @@ def cmd_train(args: argparse.Namespace) -> None:
     from .loop import SelfPlayLoop
     from .tools.builtins import build_default_registry
 
-    config = Config(
+    config = Config.from_preset(
+        args.preset,
         model_name=args.model,
         n_iterations=args.iterations,
         task_pool_size=args.pool_size,
@@ -39,6 +40,7 @@ def cmd_train(args: argparse.Namespace) -> None:
         solver_steps=args.solver_steps,
         checkpoint_dir=args.checkpoint_dir,
     )
+    logging.getLogger(__name__).info("Preset %r: %s", args.preset, config)
     registry = build_default_registry()
     loop = SelfPlayLoop(config, registry)
     loop.run()
@@ -48,28 +50,18 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 
 def cmd_eval(args: argparse.Namespace) -> None:
-    import json
     from pathlib import Path
 
-    from .eval.runner import run_eval, EvalResult
+    from .eval.runner import run_eval
     from .agents.solver import SolverAgent
-
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from .training.adapters import load_base_model, load_solver_for_eval
 
     logger = logging.getLogger(__name__)
-
-    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    device_map = "auto" if torch.cuda.is_available() else None
-
-    # Resolve base model name from checkpoint state if not supplied
     checkpoint = args.checkpoint
-    state_path = Path(checkpoint) / "state.json"
-    base_model = args.model
-    if base_model is None and state_path.exists():
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        base_model = state.get("model_name")
-        logger.info("Base model detected from checkpoint: %s", base_model)
+
+    logger.info("Loading trained solver from %s …", checkpoint)
+    tok, mdl, adapter_base = load_solver_for_eval(checkpoint)
+    base_model = args.model or adapter_base
     if base_model is None:
         logger.error("Cannot determine base model name. Pass --model explicitly.")
         sys.exit(1)
@@ -96,23 +88,16 @@ def cmd_eval(args: argparse.Namespace) -> None:
         logger.error("Unknown benchmark: %s", args.benchmark)
         sys.exit(1)
 
-    def _load_solver(model_path: str, cfg: Config) -> SolverAgent:
-        tok = AutoTokenizer.from_pretrained(model_path)
-        mdl = AutoModelForCausalLM.from_pretrained(
-            model_path, torch_dtype=dtype, device_map=device_map
-        )
-        return SolverAgent(mdl, tok, cfg)
-
     trained_config = Config(model_name=checkpoint)
     base_config = Config(model_name=base_model)
 
     logger.info("Evaluating trained solver …")
-    solver_trained = _load_solver(checkpoint, trained_config)
-    result_trained = run_eval(solver_trained, examples, trained_config, n=args.n)
+    result_trained = run_eval(SolverAgent(mdl, tok, trained_config), examples, trained_config, n=args.n)
+    del mdl
 
-    logger.info("Evaluating baseline model …")
-    solver_base = _load_solver(base_model, base_config)
-    result_base = run_eval(solver_base, examples, base_config, n=args.n)
+    logger.info("Evaluating baseline model %s …", base_model)
+    tok, mdl = load_base_model(base_model)
+    result_base = run_eval(SolverAgent(mdl, tok, base_config), examples, base_config, n=args.n)
 
     benchmark_label = {
         "synthetic": "Synthetic held-out",
@@ -140,12 +125,15 @@ def main() -> None:
 
     # --- train ---
     tr = sub.add_parser("train", help="Run the self-play training loop")
-    tr.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
-    tr.add_argument("--iterations", type=int, default=2)
-    tr.add_argument("--pool-size", type=int, default=500)
-    tr.add_argument("--curriculum-size", type=int, default=200)
-    tr.add_argument("--generator-steps", type=int, default=50)
-    tr.add_argument("--solver-steps", type=int, default=50)
+    tr.add_argument("--preset", choices=sorted(PRESETS), default="dev",
+                    help="dev: fast reduced-scale check of the full loop; full: paper schedule")
+    # Explicit flags override the preset's values.
+    tr.add_argument("--model", default=None)
+    tr.add_argument("--iterations", type=int, default=None)
+    tr.add_argument("--pool-size", type=int, default=None)
+    tr.add_argument("--curriculum-size", type=int, default=None)
+    tr.add_argument("--generator-steps", type=int, default=None)
+    tr.add_argument("--solver-steps", type=int, default=None)
     tr.add_argument("--checkpoint-dir", default="./checkpoints")
     tr.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
 
@@ -160,8 +148,8 @@ def main() -> None:
                          "bfcl: Berkeley Function Calling Leaderboard (requires internet)")
     ev.add_argument("--bfcl-split", default="live_simple",
                     help="BFCL dataset split (default: live_simple)")
-    ev.add_argument("--n", type=int, default=200,
-                    help="Number of examples to evaluate (default: 200)")
+    ev.add_argument("--n", type=int, default=100,
+                    help="Number of examples to evaluate (default: 100)")
     ev.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
 
     args = p.parse_args()

@@ -42,7 +42,7 @@ def run_eval(
         if i % 20 == 0:
             logger.info("Eval progress: %d / %d", i, len(subset))
 
-        text = _greedy_generate(solver, task)
+        text = solver.generate_greedy(task)
         predicted = parse_solver_output(text)
 
         if predicted is not None:
@@ -56,17 +56,3 @@ def run_eval(
         accuracy=accuracy_total / n_eval if n_eval else 0.0,
     )
 
-
-def _greedy_generate(solver: SolverAgent, task: GeneratedTask) -> str:
-    """Single greedy (temperature=0) forward pass through the solver."""
-    prompt = solver.build_prompt(task)
-    inputs = solver.tokenizer(prompt, return_tensors="pt").to(solver.model.device)
-    outputs = solver.model.generate(
-        **inputs,
-        max_new_tokens=512,
-        do_sample=False,
-        repetition_penalty=solver.config.repetition_penalty,
-        pad_token_id=solver.tokenizer.eos_token_id,
-    )
-    prompt_len = inputs["input_ids"].shape[1]
-    return solver.tokenizer.decode(outputs[0][prompt_len:], skip_special_tokens=True)

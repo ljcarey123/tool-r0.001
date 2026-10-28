@@ -32,7 +32,7 @@ class GRPOTrainer:
         self.config = config
         self.extra_columns = extra_columns or {}
 
-    def train(self, prompts: list[str], n_steps: int) -> None:
+    def train(self, prompts: list[str], n_steps: int, max_completion_length: int) -> None:
         from datasets import Dataset
         from trl import GRPOConfig, GRPOTrainer as TRLGRPOTrainer  # type: ignore[attr-defined]
 
@@ -57,10 +57,12 @@ class GRPOTrainer:
         grpo_config = GRPOConfig(
             output_dir="./grpo_output",
             max_steps=n_steps,
-            per_device_train_batch_size=min(4, len(prompts)),
+            # Batch size counts completions: one prompt x its rollouts per step. Tying it to
+            # num_generations keeps it valid however few prompts the curriculum yields.
+            per_device_train_batch_size=self.config.grpo_rollouts,
             num_generations=self.config.grpo_rollouts,
             temperature=self.config.grpo_temperature,
-            max_completion_length=1024,
+            max_completion_length=max_completion_length,
             learning_rate=self.config.learning_rate,
             beta=0.0,           # remove KL penalty — per ToolRL finding
             bf16=use_bf16,

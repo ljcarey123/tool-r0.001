@@ -79,19 +79,6 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
     from ..agents.parser import parse_solver_output
     from ..tools.schema import ToolCall as TC
 
-    def _greedy(task: GeneratedTask) -> str:
-        prompt = solver.build_prompt(task)
-        inputs = solver.tokenizer(prompt, return_tensors="pt").to(solver.model.device)
-        outputs = solver.model.generate(
-            **inputs,
-            max_new_tokens=512,
-            do_sample=False,
-            repetition_penalty=solver.config.repetition_penalty,
-            pad_token_id=solver.tokenizer.eos_token_id,
-        )
-        plen = inputs["input_ids"].shape[1]
-        return solver.tokenizer.decode(outputs[0][plen:], skip_special_tokens=True)
-
     def _exact(pred: list[TC], gold: list[TC]) -> bool:
         if len(pred) != len(gold):
             return False
@@ -99,7 +86,7 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
 
     hits = 0
     for task in tasks:
-        text = _greedy(task)
+        text = solver.generate_greedy(task)
         predicted = parse_solver_output(text)
         if predicted is not None and _exact(predicted, task.gold_calls):
             hits += 1

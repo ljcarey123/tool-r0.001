@@ -9,18 +9,17 @@ A reimplementation of [Tool-R0: Self-Evolving LLM Agents for Tool-Learning from 
 python -m venv .venv && .venv\Scripts\activate
 pip install -e ".[dev]"
 
-# 2. Smoke-test: verify the pipeline runs end-to-end (plumbing check only — 0.5B is too
-#    small to follow the structured format, so expect 0 valid tasks and an empty curriculum)
-tool-r0 train --model Qwen/Qwen2.5-0.5B-Instruct --iterations 1 --pool-size 20 --curriculum-size 10 --generator-steps 5 --solver-steps 5 --debug
+# 2. Dev run: the full loop at reduced scale (1 iteration, 10+10 GRPO steps, small pool)
+tool-r0 train --preset dev
 
-# 3. Full training — paper settings (resume-safe: re-run the same command if interrupted)
-tool-r0 train --model Qwen/Qwen2.5-1.5B-Instruct --iterations 2 --pool-size 500 --curriculum-size 200 --generator-steps 50 --solver-steps 50
+# 3. Full run: paper schedule (3 iterations x 50 steps). Resume-safe: re-run the same command if interrupted
+tool-r0 train --preset full
 
 # 4a. Eval — synthetic held-out tasks (zero dependencies, created automatically at training start)
 tool-r0 eval --benchmark synthetic --checkpoint ./checkpoints/solver
 
 # 4b. Eval — Berkeley Function Calling Leaderboard (external, structured gold calls)
-tool-r0 eval --benchmark bfcl --checkpoint ./checkpoints/solver --n 200
+tool-r0 eval --benchmark bfcl --checkpoint ./checkpoints/solver --n 100
 ```
 
 Both eval commands run the same benchmark against the untrained base model and print a side-by-side delta table.
@@ -68,7 +67,8 @@ Plus a **validity reward** (tool-in-menu + required params + value plausibility)
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| Base model | `Qwen/Qwen2.5-1.5B-Instruct` | Tool-R0 paper |
+| Base model | `Qwen/Qwen2.5-0.5B-Instruct` | Tool-R0 paper (Table: other base models) |
+| LoRA r / α | 16 / 32 | Fits a 4 GB GPU |
 | GRPO β (KL penalty) | 0.0 | ToolRL finding: KL hurts |
 | MC samples per task | 8 | Tool-R0 curriculum |
 | Curriculum band | [0.25, 0.75] | Tool-R0 Section 3.3 |
@@ -112,14 +112,15 @@ pip install -e ".[dev]"
 ## Run
 
 ```bash
-# Smoke-test (fast, small model, enable --debug to see raw generator outputs)
-tool-r0 train --model Qwen/Qwen2.5-0.5B-Instruct --iterations 1 --pool-size 20 --curriculum-size 10 --generator-steps 5 --solver-steps 5 --debug
-
-# Full training run (paper settings)
-tool-r0 train --model Qwen/Qwen2.5-1.5B-Instruct --iterations 2 --pool-size 500 --curriculum-size 200 --generator-steps 50 --solver-steps 50
+tool-r0 train --preset dev     # fast end-to-end check of the full loop
+tool-r0 train --preset full    # paper schedule
+tool-r0 train --preset dev --generator-steps 20   # explicit flags override the preset
 ```
 
-The trained Solver is saved to `./solver_checkpoint` (override with `--output`).
+The default model is `Qwen/Qwen2.5-0.5B-Instruct`. Generator and Solver are separate LoRA
+adapters on one shared, frozen base model, so training fits on a 4 GB GPU and checkpoints are a
+few MB. Adapters are saved to `./checkpoints/generator` and `./checkpoints/solver`
+(override with `--checkpoint-dir`).
 
 ## Evaluate
 
@@ -130,7 +131,7 @@ Two benchmarks are supported. Both compare the trained solver against the untrai
 tool-r0 eval --benchmark synthetic --checkpoint ./checkpoints/solver
 
 # Berkeley Function Calling Leaderboard (external, structured JSON gold calls)
-tool-r0 eval --benchmark bfcl --checkpoint ./checkpoints/solver --n 200
+tool-r0 eval --benchmark bfcl --checkpoint ./checkpoints/solver --n 100
 ```
 
 The synthetic eval uses 100 tasks generated from the base generator before training begins

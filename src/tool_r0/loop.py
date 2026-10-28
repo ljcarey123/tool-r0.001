@@ -16,6 +16,9 @@ from .rewards.validity import validity_reward
 from .rewards.curriculum import curriculum_reward
 from .rewards.accuracy import accuracy_reward
 from .training.grpo import GRPOTrainer
+from .training.adapters import (
+    GENERATOR_ADAPTER, SOLVER_ADAPTER, load_shared_model, save_adapters, use_adapter,
+)
 from .tools.registry import ToolRegistry
 from .tools.schema import ToolCall
 from .eval.synthetic import create_eval_set, save_eval_set, load_eval_set, eval_pass_at_1
@@ -23,8 +26,6 @@ from .eval.synthetic import create_eval_set, save_eval_set, load_eval_set, eval_
 logger = logging.getLogger(__name__)
 
 _STATE_FILE = "state.json"
-_GEN_DIR = "generator"
-_SOL_DIR = "solver"
 
 
 class SelfPlayLoop:
@@ -47,6 +48,7 @@ class SelfPlayLoop:
         self.registry = registry
         self.pool = TaskPool(config)
         # Initialised in run() before any private methods are called.
+        self.model = None  # shared PeftModel holding the generator + solver adapters
         self.generator: GeneratorAgent
         self.solver: SolverAgent
 
@@ -55,9 +57,12 @@ class SelfPlayLoop:
     # ------------------------------------------------------------------
 
     def run(self) -> SolverAgent:
-        start_iter, tokenizer, gen_model, sol_model = self._init()
-        self.generator = GeneratorAgent(gen_model, tokenizer, self.registry, self.config)
-        self.solver = SolverAgent(sol_model, tokenizer, self.config)
+        start_iter, tokenizer, model = self._init()
+        self.model = model
+        self.generator = GeneratorAgent(
+            model, tokenizer, self.registry, self.config, adapter=GENERATOR_ADAPTER
+        )
+        self.solver = SolverAgent(model, tokenizer, self.config, adapter=SOLVER_ADAPTER)
 
         eval_set = self._get_or_create_eval_set()
 
@@ -101,15 +106,12 @@ class SelfPlayLoop:
                     "Resuming training from checkpoint (completed %d / %d iterations).",
                     completed, self.config.n_iterations,
                 )
-            tokenizer, gen_model, sol_model = self._load_models(
-                gen_path=str(ckpt / _GEN_DIR),
-                sol_path=str(ckpt / _SOL_DIR),
-            )
-            return completed, tokenizer, gen_model, sol_model
+            tokenizer, model = load_shared_model(self.config, checkpoint_dir=ckpt)
+            return completed, tokenizer, model
 
         logger.info("No checkpoint found — starting fresh training.")
-        tokenizer, gen_model, sol_model = self._load_models()
-        return 0, tokenizer, gen_model, sol_model
+        tokenizer, model = load_shared_model(self.config)
+        return 0, tokenizer, model
 
     def _get_or_create_eval_set(self) -> list[GeneratedTask]:
         ckpt = Path(self.config.checkpoint_dir)
@@ -129,10 +131,7 @@ class SelfPlayLoop:
         ckpt.mkdir(parents=True, exist_ok=True)
 
         logger.info("Saving checkpoint after iteration %d …", iteration + 1)
-        self.generator.model.save_pretrained(ckpt / _GEN_DIR)
-        self.generator.tokenizer.save_pretrained(ckpt / _GEN_DIR)
-        self.solver.model.save_pretrained(ckpt / _SOL_DIR)
-        self.solver.tokenizer.save_pretrained(ckpt / _SOL_DIR)
+        save_adapters(self.model, ckpt)
 
         state = {
             "completed_iterations": iteration + 1,
@@ -179,12 +178,19 @@ class SelfPlayLoop:
                 rewards.append(r_fmt + r_val + r_cur)
             return rewards
 
-        GRPOTrainer(
-            self.generator.model,
-            self.generator.tokenizer,
-            reward_fn,
-            self.config,
-        ).train(prompts, n_steps=self.config.generator_steps)
+        # Only the generator adapter is trainable while it is active. The curriculum
+        # reward briefly switches to the solver adapter and switches back.
+        with use_adapter(self.model, GENERATOR_ADAPTER):
+            GRPOTrainer(
+                self.model,
+                self.generator.tokenizer,
+                reward_fn,
+                self.config,
+            ).train(
+                prompts,
+                n_steps=self.config.generator_steps,
+                max_completion_length=self.config.generator_max_tokens,
+            )
 
     # ------------------------------------------------------------------
     # Private: Curriculum construction
@@ -239,13 +245,18 @@ class SelfPlayLoop:
                 rewards.append(r_fmt + r_acc)
             return rewards
 
-        GRPOTrainer(
-            self.solver.model,
-            self.solver.tokenizer,
-            reward_fn,
-            self.config,
-            extra_columns={"gold_calls": gold_json},
-        ).train(prompts, n_steps=self.config.solver_steps)
+        with use_adapter(self.model, SOLVER_ADAPTER):
+            GRPOTrainer(
+                self.model,
+                self.solver.tokenizer,
+                reward_fn,
+                self.config,
+                extra_columns={"gold_calls": gold_json},
+            ).train(
+                prompts,
+                n_steps=self.config.solver_steps,
+                max_completion_length=self.config.solver_max_tokens,
+            )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -256,29 +267,3 @@ class SelfPlayLoop:
         kwargs["n_tools"] = min(kwargs["n_tools"], len(self.registry))
         kwargs["n_calls"] = min(kwargs["n_calls"], kwargs["n_tools"])
         return TaskSpec(**kwargs)
-
-    def _load_models(self, gen_path: str | None = None, sol_path: str | None = None):
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        gen_src = gen_path or self.config.model_name
-        sol_src = sol_path or self.config.model_name
-        logger.info("Loading generator from: %s", gen_src)
-        logger.info("Loading solver from:    %s", sol_src)
-
-        # Tokenizer is shared (both models use the same vocab)
-        tokenizer = AutoTokenizer.from_pretrained(gen_src)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        device_map = "auto" if torch.cuda.is_available() else None
-
-        gen_model = AutoModelForCausalLM.from_pretrained(
-            gen_src, torch_dtype=dtype, device_map=device_map
-        )
-        sol_model = AutoModelForCausalLM.from_pretrained(
-            sol_src, torch_dtype=dtype, device_map=device_map
-        )
-        logger.info("Both models loaded.")
-        return tokenizer, gen_model, sol_model

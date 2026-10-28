@@ -6,6 +6,7 @@ import logging
 from ..config import Config
 from ..data.models import GeneratedTask, TaskSpec
 from ..tools.registry import ToolRegistry
+from ..training.adapters import use_adapter
 from . import parser
 
 logger = logging.getLogger(__name__)
@@ -56,24 +57,27 @@ class GeneratorAgent:
         tokenizer,
         registry: ToolRegistry,
         config: Config,
+        adapter: str | None = None,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
         self.registry = registry
         self.config = config
+        self.adapter = adapter  # LoRA adapter to activate on a shared model
 
     def generate(self, spec: TaskSpec) -> GeneratedTask | None:
         prompt = self.build_prompt(spec)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=1024,
-            do_sample=True,
-            temperature=self.config.generation_temperature,
-            repetition_penalty=self.config.repetition_penalty,
-            num_return_sequences=1,
-            pad_token_id=self.tokenizer.eos_token_id,
-        )
+        with use_adapter(self.model, self.adapter):
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config.generator_max_tokens,
+                do_sample=True,
+                temperature=self.config.generation_temperature,
+                repetition_penalty=self.config.repetition_penalty,
+                num_return_sequences=1,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
         text = self.tokenizer.decode(
             outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
         )
