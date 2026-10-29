@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+import json
+import math
+from typing import Any
+
 from ..config import Config
 from ..tools.schema import ToolCall
+
+# Per-pair weights — Tool-R0 paper, solver accuracy reward.
+_W_NAME = 0.2
+_W_KEY = 0.3
+_W_VAL = 0.5
+
+# Numeric strings longer than this are compared as strings, avoiding float artifacts
+# on IDs, phone numbers, etc.
+_MAX_NUMERIC_DIGITS = 15
 
 
 def accuracy_reward(
@@ -10,73 +23,85 @@ def accuracy_reward(
     config: Config,
 ) -> float:
     """
-    Fine-grained tool-call accuracy reward (from ToolRL paper, same authors).
+    Tool-R0 solver accuracy reward, in [0, 1].
 
-    Greedily matches each gold call to the best unused predicted call by name,
-    then computes:
-      - name Jaccard across all calls
-      - parameter-key Jaccard summed over matched pairs
-      - parameter-value exact match summed over matched pairs
-
-    Raw scores are normalised to [-3, 3], then a multiplicative penalty is
-    applied for extra spurious calls.
+    Each gold call is greedily matched to the best-scoring unused prediction, where
+        s = 0.2·s_name + 0.3·s_key + 0.5·s_val
+    (s_name: name equality; s_key: F1 over argument keys; s_val: fraction of matching
+    values over the shared keys). Unmatched gold calls score 0. The mean pair score is
+    scaled by 1 / (1 + α·max(0, |predicted| − |gold|)) to penalise spurious calls.
     """
     if not gold:
         return 0.0
 
-    pairs = _greedy_match(predicted, gold)
-
-    r_name = _name_score(predicted, gold)
-    r_keys = _key_score(pairs)
-    r_values = _value_score(pairs)
-
-    s_max = 1 + len(gold) + sum(len(g.parameters) for g in gold)
-    normalised = 6.0 * (r_name + r_keys + r_values) / s_max - 3.0
-
-    extra = max(0, len(predicted) - len(gold))
-    return normalised * (1.0 / (1.0 + config.extra_call_penalty * extra))
-
-
-# ---------------------------------------------------------------------------
-# Sub-scorers
-# ---------------------------------------------------------------------------
-
-def _greedy_match(
-    predicted: list[ToolCall], gold: list[ToolCall]
-) -> list[tuple[ToolCall, ToolCall]]:
-    """Match each gold call to the best unused predicted call sharing its name."""
-    used: set[int] = set()
-    pairs: list[tuple[ToolCall, ToolCall]] = []
+    unused = list(range(len(predicted)))
+    total = 0.0
     for g in gold:
-        for i, p in enumerate(predicted):
-            if i not in used and p.name == g.name:
-                pairs.append((p, g))
-                used.add(i)
-                break
-    return pairs
+        if not unused:
+            break
+        best = max(unused, key=lambda i: pair_score(predicted[i], g))
+        total += pair_score(predicted[best], g)
+        unused.remove(best)
+
+    mean = total / len(gold)
+    extra = max(0, len(predicted) - len(gold))
+    return mean / (1.0 + config.extra_call_penalty * extra)
 
 
-def _name_score(predicted: list[ToolCall], gold: list[ToolCall]) -> float:
-    pred_names = {c.name for c in predicted}
-    gold_names = {c.name for c in gold}
-    union = pred_names | gold_names
-    return len(pred_names & gold_names) / len(union) if union else 0.0
+def pair_score(pred: ToolCall, gold: ToolCall) -> float:
+    return (
+        _W_NAME * float(pred.name == gold.name)
+        + _W_KEY * _key_f1(pred.parameters, gold.parameters)
+        + _W_VAL * _value_fraction(pred.parameters, gold.parameters)
+    )
 
 
-def _key_score(pairs: list[tuple[ToolCall, ToolCall]]) -> float:
-    total = 0.0
-    for pred, gold in pairs:
-        pk, gk = set(pred.parameters), set(gold.parameters)
-        union = pk | gk
-        if union:
-            total += len(pk & gk) / len(union)
-    return total
+def _key_f1(pred: dict, gold: dict) -> float:
+    pk, gk = set(pred), set(gold)
+    if not pk and not gk:
+        return 1.0  # zero-argument tool called with no arguments
+    shared = len(pk & gk)
+    if shared == 0:
+        return 0.0
+    precision, recall = shared / len(pk), shared / len(gk)
+    return 2 * precision * recall / (precision + recall)
 
 
-def _value_score(pairs: list[tuple[ToolCall, ToolCall]]) -> float:
-    total = 0.0
-    for pred, gold in pairs:
-        for key in gold.parameters:
-            if key in pred.parameters and str(pred.parameters[key]) == str(gold.parameters[key]):
-                total += 1.0
-    return total
+def _value_fraction(pred: dict, gold: dict) -> float:
+    shared = set(pred) & set(gold)
+    if not shared:
+        return 1.0 if not pred and not gold else 0.0
+    return sum(values_match(pred[k], gold[k]) for k in shared) / len(shared)
+
+
+def values_match(a: Any, b: Any) -> bool:
+    """Equal directly, after numeric coercion, ignoring whitespace, or as canonical JSON."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b  # Python treats True == 1; a boolean argument is not a number
+    if a == b:
+        return True
+    na, nb = _as_number(a), _as_number(b)
+    if na is not None and nb is not None:
+        return math.isclose(na, nb, rel_tol=1e-9, abs_tol=1e-9)
+    if isinstance(a, str) and isinstance(b, str):
+        return "".join(a.split()) == "".join(b.split())
+    try:
+        return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    except (TypeError, ValueError):
+        return False
+
+
+def _as_number(v: Any) -> float | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if sum(ch.isdigit() for ch in s) > _MAX_NUMERIC_DIGITS:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None

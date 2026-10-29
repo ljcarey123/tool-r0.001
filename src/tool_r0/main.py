@@ -28,7 +28,6 @@ def _configure_logging(debug: bool) -> None:
 
 def cmd_train(args: argparse.Namespace) -> None:
     from .loop import SelfPlayLoop
-    from .tools.builtins import build_default_registry
 
     config = Config.from_preset(
         args.preset,
@@ -41,8 +40,7 @@ def cmd_train(args: argparse.Namespace) -> None:
         checkpoint_dir=args.checkpoint_dir,
     )
     logging.getLogger(__name__).info("Preset %r: %s", args.preset, config)
-    registry = build_default_registry()
-    loop = SelfPlayLoop(config, registry)
+    loop = SelfPlayLoop(config)
     loop.run()
     logging.getLogger(__name__).info(
         "Training complete. Checkpoints in %s", args.checkpoint_dir

@@ -19,7 +19,6 @@ from .training.grpo import GRPOTrainer
 from .training.adapters import (
     GENERATOR_ADAPTER, SOLVER_ADAPTER, load_shared_model, save_adapters, use_adapter,
 )
-from .tools.registry import ToolRegistry
 from .tools.schema import ToolCall
 from .eval.synthetic import create_eval_set, save_eval_set, load_eval_set, eval_pass_at_1
 
@@ -43,9 +42,8 @@ class SelfPlayLoop:
     command — the loop detects the state file and skips completed iterations.
     """
 
-    def __init__(self, config: Config, registry: ToolRegistry) -> None:
+    def __init__(self, config: Config) -> None:
         self.config = config
-        self.registry = registry
         self.pool = TaskPool(config)
         # Initialised in run() before any private methods are called.
         self.model = None  # shared PeftModel holding the generator + solver adapters
@@ -60,7 +58,7 @@ class SelfPlayLoop:
         start_iter, tokenizer, model = self._init()
         self.model = model
         self.generator = GeneratorAgent(
-            model, tokenizer, self.registry, self.config, adapter=GENERATOR_ADAPTER
+            model, tokenizer, self.config, adapter=GENERATOR_ADAPTER
         )
         self.solver = SolverAgent(model, tokenizer, self.config, adapter=SOLVER_ADAPTER)
 
@@ -121,7 +119,7 @@ class SelfPlayLoop:
             logger.info("Loaded %d tasks from existing eval set.", len(existing))
             return existing
         logger.info("Generating held-out eval set (%d tasks) …", self.config.eval_set_size)
-        tasks = create_eval_set(self.generator, self.registry, n=self.config.eval_set_size)
+        tasks = create_eval_set(self.generator, n=self.config.eval_set_size)
         if tasks:
             save_eval_set(tasks, eval_path)
         return tasks
@@ -149,7 +147,7 @@ class SelfPlayLoop:
     def _train_generator(self) -> None:
         logger.info("Training Generator for %d steps…", self.config.generator_steps)
         n_prompts = self.config.grpo_rollouts * self.config.generator_steps
-        specs = [self._sample_spec() for _ in range(n_prompts)]
+        specs = [self.config.sample_spec() for _ in range(n_prompts)]
         prompts = [self.generator.build_prompt(s) for s in specs]
 
         solver_ref = self.solver  # capture current solver in closure
@@ -200,7 +198,7 @@ class SelfPlayLoop:
         logger.info("Sampling %d tasks from frozen Generator…", self.config.task_pool_size)
         raw: list[GeneratedTask] = []
         for _ in range(self.config.task_pool_size):
-            spec = self._sample_spec()
+            spec = self.config.sample_spec()
             task = self.generator.generate(spec)
             if task is not None:
                 raw.append(task)
@@ -257,13 +255,3 @@ class SelfPlayLoop:
                 n_steps=self.config.solver_steps,
                 max_completion_length=self.config.solver_max_tokens,
             )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _sample_spec(self) -> TaskSpec:
-        kwargs = self.config.sample_spec_kwargs()
-        kwargs["n_tools"] = min(kwargs["n_tools"], len(self.registry))
-        kwargs["n_calls"] = min(kwargs["n_calls"], kwargs["n_tools"])
-        return TaskSpec(**kwargs)

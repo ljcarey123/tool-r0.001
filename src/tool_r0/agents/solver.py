@@ -31,6 +31,28 @@ Available tools:
 User request: {question}
 """
 
+# Semantic-coherence judge (paper Fig. 11): the Solver rates a generated task 1–5.
+_JUDGE_SYSTEM_PROMPT = (
+    "You are a strict reviewer of tool-calling tasks. Rate how good the task is on a scale "
+    "from 1 to 5:\n"
+    "5 = a natural, specific user request, and the gold tool call(s) fully solve it.\n"
+    "3 = understandable but vague, or the tool call only partly solves it.\n"
+    "1-2 = template-like or instruction-like text rather than a real user request, or the "
+    "tool call does not match the request.\n"
+    "Reply with a single digit only."
+)
+
+_JUDGE_USER_TEMPLATE = """\
+Available tools:
+{tools}
+
+User request: {question}
+
+Gold tool call(s):
+{calls}
+
+Score (1-5):"""
+
 
 class SolverAgent:
     def __init__(self, model, tokenizer, config: Config, adapter: str | None = None) -> None:
@@ -48,7 +70,26 @@ class SolverAgent:
 
     def generate_greedy(self, task: GeneratedTask, max_new_tokens: int = 512) -> str:
         """Single greedy decode, returning raw text — used for evaluation."""
-        prompt = self.build_prompt(task)
+        return self._greedy(self.build_prompt(task), max_new_tokens)
+
+    def judge_coherence(self, task: GeneratedTask) -> int | None:
+        """Rate a generated task's coherence 1–5, or None if no score is found."""
+        user_msg = _JUDGE_USER_TEMPLATE.format(
+            tools=json.dumps([t.to_dict() for t in task.available_tools]),
+            question=task.question,
+            calls=json.dumps([c.model_dump() for c in task.gold_calls]),
+        )
+        prompt = self.tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return parser.parse_score(self._greedy(prompt, max_new_tokens=8))
+
+    def _greedy(self, prompt: str, max_new_tokens: int) -> str:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         with use_adapter(self.model, self.adapter):
             outputs = self.model.generate(

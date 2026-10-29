@@ -3,6 +3,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+from .data.models import TaskSpec
+
 
 @dataclass
 class Config:
@@ -21,7 +23,7 @@ class Config:
 
     # Max new tokens per completion. Generator outputs carry full tool schemas and
     # need more room; solver outputs are a short <think> plus one or two calls.
-    generator_max_tokens: int = 768
+    generator_max_tokens: int = 1024
     solver_max_tokens: int = 384
 
     # Dataset sizes
@@ -33,13 +35,15 @@ class Config:
     p_low: float = 0.25
     p_high: float = 0.75
     sigma: float = 0.12
+    semantic_reward: bool = True  # add r_sem: Solver judges task coherence (paper Fig. 11)
 
     # GRPO
     grpo_rollouts: int = 4
     grpo_temperature: float = 1.0   # temperature used during GRPO rollouts
     generation_temperature: float = 0.7  # temperature for inference outside of GRPO (curriculum, eval)
     repetition_penalty: float = 1.0  # >1 penalises the repeated braces/quotes/keys that JSON needs
-    learning_rate: float = 5e-6
+    # Paper uses 1e-6 for full fine-tuning; LoRA typically needs ~10x higher.
+    learning_rate: float = 2e-5
 
     # Accuracy reward
     extra_call_penalty: float = 0.25
@@ -62,11 +66,13 @@ class Config:
             "utilities",
         ]
     )
-    context_types: list[str] = field(
-        default_factory=lambda: ["single-turn"]
-    )
-    n_tools_range: tuple[int, int] = (2, 4)
-    n_calls_range: tuple[int, int] = (1, 2)
+    # Spec distribution — paper Appendix B. Multi-turn context (10% in the paper) is
+    # out of scope here, so every task is single-turn.
+    p_two_calls: float = 0.2                    # n=2 gold calls w.p. 0.2, else n=1
+    multi_call_menu: tuple[int, int] = (3, 5)   # menu size m when n > 1
+    small_menu: tuple[int, int] = (2, 4)        # menu size m when n = 1 ...
+    large_menu: tuple[int, int] = (5, 8)        # ... drawn from one of two buckets
+    p_large_menu: float = 0.5                   # bucket probability (not given in the paper)
 
     @classmethod
     def from_preset(cls, preset: str, **overrides) -> "Config":
@@ -76,13 +82,19 @@ class Config:
         values = {**PRESETS[preset], **{k: v for k, v in overrides.items() if v is not None}}
         return cls(**values)
 
-    def sample_spec_kwargs(self) -> dict:
-        return {
-            "domain": random.choice(self.domains),
-            "context": random.choice(self.context_types),
-            "n_tools": random.randint(*self.n_tools_range),
-            "n_calls": random.randint(*self.n_calls_range),
-        }
+    def sample_spec(self, rng: random.Random | None = None) -> TaskSpec:
+        rng = rng or random.Random()
+        n_calls = 2 if rng.random() < self.p_two_calls else 1
+        if n_calls > 1:
+            menu = self.multi_call_menu
+        else:
+            menu = self.large_menu if rng.random() < self.p_large_menu else self.small_menu
+        return TaskSpec(
+            domain=rng.choice(self.domains),
+            context="single-turn",
+            n_tools=rng.randint(*menu),
+            n_calls=n_calls,
+        )
 
 
 # "dev" is a fast end-to-end check of the full loop at reduced scale;
@@ -96,7 +108,7 @@ PRESETS: dict[str, dict] = {
         "curriculum_size": 24,
         "mc_samples": 4,
         "eval_set_size": 20,
-        "generator_max_tokens": 640,
+        "generator_max_tokens": 768,
         "solver_max_tokens": 256,
     },
     "full": {},

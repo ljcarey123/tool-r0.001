@@ -100,3 +100,12 @@ class TestParseSolverOutput:
 
     def test_empty_returns_none(self):
         assert parse_solver_output("") is None
+
+
+class TestParseScore:
+    @pytest.mark.parametrize("text,expected", [
+        ("4", 4), ("Score: 5", 5), (" 2.", 2), ("I'd say 3/5", 3), ("none", None), ("10", None),
+    ])
+    def test_parse_score(self, text, expected):
+        from tool_r0.agents.parser import parse_score
+        assert parse_score(text) == expected

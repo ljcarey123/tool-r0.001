@@ -33,11 +33,10 @@ The paper reports a **92.5% relative improvement** over the Qwen2.5-1.5B base mo
 ## Architecture
 
 ```
-registry (tool schemas)
+task spec (domain, n_tools, n_calls)
     │
     ▼
-GeneratorAgent  ──GRPO──►  evolving generator
-    │ TaskSpec → GeneratedTask (question + available_tools + gold_calls)
+GeneratorAgent  ──GRPO──►  evolving generator   (invents a question, a tool menu, gold calls)
     │
     ▼
 TaskPool  (deduplicate → cross-verify difficulty → sort easy→hard)
@@ -46,39 +45,45 @@ TaskPool  (deduplicate → cross-verify difficulty → sort easy→hard)
 SolverAgent  ──GRPO──►  evolving solver
 ```
 
+Generator and Solver are separate LoRA adapters on one frozen base model.
+
 ### Reward functions
 
-**Generator rewards** (3 binary criteria, weighted per paper Table 1):
+**Generator**: `r_fmt + r_valid + r_curr`
 
-| Criterion | Weight | Passes when |
-|-----------|--------|-------------|
-| `I_tag`   | 0.3    | All four required XML tags are present |
-| `I_parse` | 0.3    | `<available_tools>` hydrates into valid `Tool` objects |
-| `I_norm`  | 0.4    | `<tool_call_answer>` hydrates into valid `ToolCall` objects |
+| Reward | Definition |
+|--------|------------|
+| `r_fmt` | 0.3 · all four tags present + 0.3 · `<available_tools>` parses + 0.4 · `<tool_call_answer>` normalises |
+| `r_valid` | 0.4 · gold tool in menu + 0.4 · required params present + 0.2 · argument values appear in the question |
+| `r_curr` | `r_diff + r_sem`. `r_diff`: band-pass on the Solver's pass rate over K=8 samples (1 inside [0.25, 0.75], Gaussian decay σ=0.12 outside, 0 if never solved). `r_sem`: the Solver rates task coherence 1–5, scaled to [0, 1] |
 
-Plus a **validity reward** (tool-in-menu + required params + value plausibility) and a **curriculum reward** (band-pass [0.25, 0.75] so tasks are neither trivial nor impossible).
+**Solver**: `r_fmt + r_acc`
 
-**Solver rewards** (per ToolRL paper):
+| Reward | Definition |
+|--------|------------|
+| `r_fmt` | 0.3 · `<think>` + answer tags + 0.3 · answer parses + 0.4 · normalises to ≥1 call (placeholders score 0) |
+| `r_acc` | Each gold call is greedily matched to its best prediction, scored `0.2·name + 0.3·key-F1 + 0.5·value-match`, averaged, then × `1/(1 + 0.25·extra calls)`. Range [0, 1] |
 
-- **Format**: binary 0/1 — `<think>` present + parseable tool calls.
-- **Accuracy**: greedy name match → Jaccard on name + key + value exact, normalised to [−3, 3], with a penalty for extra calls (`α = 0.25`).
+The parser accepts strict JSON, Python-literal syntax, code-fenced blocks and OpenAI-style call wrappers.
 
-### Key hyperparameters
+### Key hyperparameters and deviations from the paper
 
-| Parameter | Value | Source |
-|-----------|-------|--------|
-| Base model | `Qwen/Qwen2.5-0.5B-Instruct` | Tool-R0 paper (Table: other base models) |
-| LoRA r / α | 16 / 32 | Fits a 4 GB GPU |
-| GRPO β (KL penalty) | 0.0 | ToolRL finding: KL hurts |
-| MC samples per task | 8 | Tool-R0 curriculum |
-| Curriculum band | [0.25, 0.75] | Tool-R0 Section 3.3 |
-| Extra-call penalty α | 0.25 | ToolRL accuracy reward |
+| Parameter | Here | Paper | Why different |
+|-----------|------|-------|---------------|
+| Base model | Qwen2.5-0.5B-Instruct | 0.5B–3B (1.5B main) | Reproducing the 0.5B result |
+| Fine-tuning | LoRA r=16, α=32 | Full | Fits a 4 GB GPU |
+| Learning rate | 2e-5 | 1e-6 | LoRA needs a higher rate |
+| KL β | 0 | 0.01 | Named adapters have no reference copy in TRL; ToolRL also found KL hurts |
+| Batch | 4 completions/step | 24–32 | Memory |
+| Task pool | 500 → 200 | 10k → 2k | Compute |
+| Context | single-turn | 10% multi-turn | Scope |
+| Rollouts / temperature / iterations × steps | 4 / 1.0 / 3 × 50 | same | |
 
 ## Project layout
 
 ```
 src/tool_r0/
-├── config.py          # Config dataclass — all hyperparameters
+├── config.py          # Config dataclass, presets, task-spec distribution
 ├── main.py            # CLI entry point
 ├── loop.py            # SelfPlayLoop — outer training loop
 ├── agents/
@@ -88,12 +93,17 @@ src/tool_r0/
 ├── rewards/
 │   ├── format.py      # Format rewards (generator + solver)
 │   ├── validity.py    # Generator validity reward
-│   ├── curriculum.py  # Curriculum band-pass reward
+│   ├── curriculum.py  # Curriculum reward (difficulty band-pass + coherence judge)
 │   └── accuracy.py    # Solver accuracy reward
 ├── tools/
-│   ├── schema.py      # Tool + ToolCall pydantic models
-│   ├── registry.py    # ToolRegistry (schema-only, no execution)
-│   └── builtins.py    # Default 4-tool registry
+│   └── schema.py      # Tool + ToolCall pydantic models
+├── training/
+│   ├── adapters.py    # Shared base model + generator/solver LoRA adapters
+│   └── grpo.py        # Thin wrapper around TRL's GRPOTrainer
+├── eval/
+│   ├── synthetic.py   # Held-out generated tasks
+│   ├── bfcl.py        # BFCL loader
+│   └── runner.py      # Trained vs base comparison
 └── data/
     ├── models.py      # TaskSpec, GeneratedTask, SolverExample
     └── pool.py        # TaskPool — dedup, cross-verify, curriculum build

@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
+from ..agents.parser import extract_tag, is_placeholder, load_lenient, parse_calls, parse_tools
 
-from ..agents.parser import extract_tag
-from ..tools.schema import Tool, ToolCall
-
-# Generator format reward weights — from Tool-R0 paper Table 1 / Section 3.2:
-#   r_fmt = 0.3·I_tag + 0.3·I_parse + 0.4·I_norm
-# Each I_* is a binary 0/1 indicator; possible total scores: 0, 0.3, 0.6, 0.7, 1.0.
+# r_fmt = 0.3·I_tag + 0.3·I_parse + 0.4·I_norm — Tool-R0 Appendix (solver format reward).
+# The generator reuses the same weights; whether the paper weights the generator's
+# indicators equally (range 0..3) is still to be confirmed against the PDF.
 _W_TAG = 0.3
 _W_PARSE = 0.3
 _W_NORM = 0.4
@@ -15,68 +12,48 @@ _W_NORM = 0.4
 
 def generator_format_reward(text: str) -> float:
     """
-    Three binary criteria, weighted per the paper (0.3 / 0.3 / 0.4):
-
-    I_tag  — all four required tags are present and extractable.
-    I_parse — <available_tools> is a valid JSON list of well-formed Tool objects.
-    I_norm  — <tool_call_answer> parses into at least one valid ToolCall object.
+    I_tag   — all four required tags are present and extractable.
+    I_parse — <available_tools> parses into a non-empty list of Tool objects.
+    I_norm  — <tool_call_answer> normalises into at least one ToolCall.
     """
     score = 0.0
 
-    # I_tag
     required = ["think", "question", "available_tools", "tool_call_answer"]
     if all(f"<{t}>" in text and f"</{t}>" in text for t in required):
         score += _W_TAG
 
-    # I_parse — tools block hydrates into Tool objects
     tools_raw = extract_tag(text, "available_tools")
-    if tools_raw:
-        try:
-            data = json.loads(tools_raw)
-            if isinstance(data, list) and data and all(
-                isinstance(t, dict) and "name" in t for t in data
-            ):
-                [Tool(**t) for t in data]  # raises if schema is wrong
-                score += _W_PARSE
-        except Exception:
-            pass
+    if tools_raw and parse_tools(tools_raw) is not None:
+        score += _W_PARSE
 
-    # I_norm — answer block hydrates into ToolCall objects
     calls_raw = extract_tag(text, "tool_call_answer")
-    if calls_raw:
-        try:
-            raw = json.loads(calls_raw)
-            items = raw if isinstance(raw, list) else [raw]
-            if items and all(isinstance(c, dict) and "name" in c for c in items):
-                [ToolCall(**c) for c in items]  # raises if schema is wrong
-                score += _W_NORM
-        except Exception:
-            pass
+    if calls_raw and parse_calls(calls_raw) is not None:
+        score += _W_NORM
 
     return score
 
 
 def solver_format_reward(text: str) -> float:
     """
-    Binary reward (0 or 1) matching the ToolRL paper (same authors):
-    returns 1.0 only if both the <think> tag and a parseable <tool_call_answer>
-    containing at least one valid ToolCall are present.
-
-    Tool-R0 describes this as "partial credit on parseability for special tokens"
-    but gives no explicit weights; the ToolRL paper uses a strict binary check.
+    Partial credit per the Tool-R0 paper:
+      I_tag   — <think> and <tool_call_answer> blocks are both present.
+      I_parse — the <tool_call_answer> block parses (JSON / Python literal / fenced).
+      I_norm  — it normalises into at least one ToolCall.
+    A placeholder answer such as "[...]" scores zero overall.
     """
-    has_think = "<think>" in text and "</think>" in text
-
     calls_raw = extract_tag(text, "tool_call_answer")
-    has_calls = False
+    if calls_raw is not None and is_placeholder(calls_raw):
+        return 0.0
+
+    score = 0.0
+    if "<think>" in text and "</think>" in text and calls_raw is not None:
+        score += _W_TAG
     if calls_raw:
         try:
-            raw = json.loads(calls_raw)
-            items = raw if isinstance(raw, list) else [raw]
-            if items and all(isinstance(c, dict) and "name" in c for c in items):
-                [ToolCall(**c) for c in items]
-                has_calls = True
-        except Exception:
+            load_lenient(calls_raw)
+            score += _W_PARSE
+        except ValueError:
             pass
-
-    return 1.0 if (has_think and has_calls) else 0.0
+        if parse_calls(calls_raw) is not None:
+            score += _W_NORM
+    return score

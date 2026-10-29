@@ -5,7 +5,6 @@ import logging
 
 from ..config import Config
 from ..data.models import GeneratedTask, TaskSpec
-from ..tools.registry import ToolRegistry
 from ..training.adapters import use_adapter
 from . import parser
 
@@ -55,13 +54,11 @@ class GeneratorAgent:
         self,
         model,
         tokenizer,
-        registry: ToolRegistry,
         config: Config,
         adapter: str | None = None,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
-        self.registry = registry
         self.config = config
         self.adapter = adapter  # LoRA adapter to activate on a shared model
 

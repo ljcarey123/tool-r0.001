@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
+from typing import Any
 
 from ..tools.schema import Tool, ToolCall
 
@@ -14,6 +16,69 @@ def extract_tag(text: str, tag: str) -> str | None:
     """
     matches = re.findall(rf"<{re.escape(tag)}>(.*?)</{re.escape(tag)}>", text, re.DOTALL)
     return matches[-1].strip() if matches else None
+
+
+def is_placeholder(text: str) -> bool:
+    """True for template filler such as "...", "[...]" or "…" with no real content."""
+    return not re.search(r"[A-Za-z0-9]", text)
+
+
+def load_lenient(raw: str) -> Any:
+    """Parse a JSON-ish block: strict JSON, Python-literal syntax, or either inside a
+    markdown code fence (the paper's parser accepts all three). Raises ValueError."""
+    raw = raw.strip()
+    fence = re.match(r"^```[a-zA-Z]*\s*(.*?)\s*```$", raw, re.DOTALL)
+    if fence:
+        raw = fence.group(1)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError, MemoryError, RecursionError) as exc:
+        raise ValueError("unparseable block") from exc
+
+
+def _unwrap_call(obj: Any) -> Any:
+    """Normalise OpenAI-style wrappers to {"name": ..., "arguments": {...}}:
+    {"type": "function", "function": {"name": ..., "arguments": "<json string>"}}."""
+    if isinstance(obj, dict) and isinstance(obj.get("function"), dict) and "name" not in obj:
+        obj = obj["function"]
+    if isinstance(obj, dict):
+        for key in ("arguments", "parameters"):
+            if isinstance(obj.get(key), str):
+                try:
+                    obj = {**obj, key: load_lenient(obj[key])}
+                except ValueError:
+                    pass
+    return obj
+
+
+def parse_tools(raw: str) -> list[Tool] | None:
+    """Parse an <available_tools> block into a non-empty list of Tools, or None."""
+    try:
+        data = load_lenient(raw)
+        if not isinstance(data, list) or not data:
+            return None
+        return [Tool(**t) for t in data]
+    except Exception:
+        return None
+
+
+def parse_calls(raw: str) -> list[ToolCall] | None:
+    """Parse a <tool_call_answer> block into a non-empty list of ToolCalls, or None.
+    A single call object (not wrapped in a list) is accepted."""
+    if is_placeholder(raw):
+        return None
+    try:
+        data = load_lenient(raw)
+        items = data if isinstance(data, list) else [data]
+        if not items:
+            return None
+        return [ToolCall(**_unwrap_call(c)) for c in items]
+    except Exception:
+        return None
 
 
 def parse_generator_output(
@@ -33,18 +98,17 @@ def parse_generator_output(
     if not re.search(r"[A-Za-z]{2}", question):
         return None
 
-    try:
-        tools = [Tool(**t) for t in json.loads(tools_raw)]
-    except Exception:
+    tools = parse_tools(tools_raw)
+    calls = parse_calls(calls_raw)
+    if tools is None or calls is None:
         return None
-
-    try:
-        raw = json.loads(calls_raw)
-        calls = [ToolCall(**c) for c in (raw if isinstance(raw, list) else [raw])]
-    except Exception:
-        return None
-
     return question, tools, calls
+
+
+def parse_score(text: str) -> int | None:
+    """First standalone digit 1–5 in a judge's reply, or None."""
+    match = re.search(r"(?<!\d)[1-5](?!\d)", text)
+    return int(match.group()) if match else None
 
 
 def parse_solver_output(text: str) -> list[ToolCall] | None:
@@ -55,9 +119,4 @@ def parse_solver_output(text: str) -> list[ToolCall] | None:
     calls_raw = extract_tag(text, "tool_call_answer")
     if not calls_raw:
         return None
-    try:
-        raw = json.loads(calls_raw)
-        data = raw if isinstance(raw, list) else [raw]
-        return [ToolCall(**c) for c in data]
-    except Exception:
-        return None
+    return parse_calls(calls_raw)

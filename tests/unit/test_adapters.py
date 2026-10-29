@@ -57,3 +57,17 @@ class TestPresets:
     def test_unknown_preset_raises(self):
         with pytest.raises(ValueError):
             Config.from_preset("huge")
+
+
+class TestSampleSpec:
+    def test_distribution_matches_paper(self):
+        import random
+        rng = random.Random(0)
+        cfg = Config()
+        specs = [cfg.sample_spec(rng) for _ in range(4000)]
+        two_call = [s for s in specs if s.n_calls == 2]
+        assert 0.17 < len(two_call) / len(specs) < 0.23
+        assert all(3 <= s.n_tools <= 5 for s in two_call)
+        assert all(2 <= s.n_tools <= 8 for s in specs if s.n_calls == 1)
+        assert max(s.n_tools for s in specs) == 8  # no cap from a fixed tool pool
+        assert {s.context for s in specs} == {"single-turn"}

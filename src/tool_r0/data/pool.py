@@ -6,7 +6,7 @@ import logging
 
 from ..config import Config
 from .models import GeneratedTask, SolverExample
-from ..tools.schema import ToolCall
+from ..rewards.curriculum import exact_match
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class TaskPool:
             valid = [s for s in samples if s is not None]
             if not valid:
                 continue
-            successes = sum(1 for s in valid if _exact_match(s, task.gold_calls))
+            successes = sum(1 for s in valid if exact_match(s, task.gold_calls))
             difficulty = successes / k
             if difficulty > 0.0:  # discard tasks the solver never gets right
                 examples.append(SolverExample(task=task, difficulty=difficulty))
@@ -98,8 +98,3 @@ class TaskPool:
         )
         return hashlib.md5(key.encode()).hexdigest()  # noqa: S324 — not cryptographic
 
-
-def _exact_match(predicted: list[ToolCall], gold: list[ToolCall]) -> bool:
-    if len(predicted) != len(gold):
-        return False
-    return {c.canonical() for c in predicted} == {c.canonical() for c in gold}

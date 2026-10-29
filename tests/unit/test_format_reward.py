@@ -65,8 +65,8 @@ class TestGeneratorFormatReward:
 
 class TestSolverFormatReward:
     """
-    Binary reward per ToolRL paper (same authors):
-    1.0 if <think> tag + parseable <tool_call_answer> with valid ToolCall(s), else 0.0.
+    Partial credit per the Tool-R0 paper: I_tag=0.3 (<think> + <tool_call_answer>),
+    I_parse=0.3 (answer block parses), I_norm=0.4 (normalises to >= 1 ToolCall).
     """
 
     def test_perfect_output_scores_one(self):
@@ -75,9 +75,9 @@ class TestSolverFormatReward:
     def test_empty_scores_zero(self):
         assert solver_format_reward("") == pytest.approx(0.0)
 
-    def test_missing_think_scores_zero(self):
+    def test_missing_think_loses_tag_credit(self):
         text = PERFECT_SOLVER.replace("<think>I'll use the calculator.</think>", "")
-        assert solver_format_reward(text) == pytest.approx(0.0)
+        assert solver_format_reward(text) == pytest.approx(0.7)
 
     def test_missing_calls_scores_zero(self):
         text = PERFECT_SOLVER.replace(
@@ -86,14 +86,23 @@ class TestSolverFormatReward:
         )
         assert solver_format_reward(text) == pytest.approx(0.0)
 
-    def test_malformed_calls_json_scores_zero(self):
+    def test_malformed_calls_json_gets_tag_credit_only(self):
         text = "<think>ok</think><tool_call_answer>not valid json</tool_call_answer>"
-        assert solver_format_reward(text) == pytest.approx(0.0)
+        assert solver_format_reward(text) == pytest.approx(0.3)
 
-    def test_calls_without_name_scores_zero(self):
+    def test_calls_without_name_parse_but_do_not_normalise(self):
         text = '<think>ok</think><tool_call_answer>[{"parameters": {}}]</tool_call_answer>'
+        assert solver_format_reward(text) == pytest.approx(0.6)
+
+    def test_placeholder_answer_scores_zero(self):
+        text = "<think>ok</think><tool_call_answer>[...]</tool_call_answer>"
         assert solver_format_reward(text) == pytest.approx(0.0)
 
-    def test_both_present_and_valid_scores_one(self):
-        text = '<think>thinking</think><tool_call_answer>[{"name": "get_date", "parameters": {}}]</tool_call_answer>'
+    @pytest.mark.parametrize("answer", [
+        '```json\n[{"name": "get_date", "arguments": {}}]\n```',          # code fence
+        "[{'name': 'get_date', 'arguments': {}}]",                       # Python literal
+        '[{"type": "function", "function": {"name": "get_date", "arguments": "{}"}}]',  # OpenAI
+    ])
+    def test_lenient_formats_score_one(self, answer):
+        text = f"<think>thinking</think><tool_call_answer>{answer}</tool_call_answer>"
         assert solver_format_reward(text) == pytest.approx(1.0)

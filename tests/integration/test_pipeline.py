@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 from tool_r0.config import Config
 from tool_r0.data.models import GeneratedTask, TaskSpec
 from tool_r0.data.pool import TaskPool
-from tool_r0.tools.builtins import build_default_registry
 from tool_r0.tools.schema import Tool, ToolCall
 from tool_r0.agents.generator import GeneratorAgent
 from tool_r0.agents.solver import SolverAgent
@@ -25,11 +24,6 @@ from tool_r0.rewards.accuracy import accuracy_reward
 @pytest.fixture
 def cfg() -> Config:
     return Config(mc_samples=4, grpo_rollouts=2, task_pool_size=10, curriculum_size=4)
-
-
-@pytest.fixture
-def registry():
-    return build_default_registry()
 
 
 def _make_fake_tokenizer(decode_output: str = ""):
@@ -89,29 +83,29 @@ VALID_GEN_OUTPUT = """
 
 
 class TestGeneratorAgentIntegration:
-    def test_generate_returns_task(self, cfg, registry):
+    def test_generate_returns_task(self, cfg):
         tok = _make_fake_tokenizer(decode_output=VALID_GEN_OUTPUT)
         model = _make_fake_model([VALID_GEN_OUTPUT])
 
-        agent = GeneratorAgent(model, tok, registry, cfg)
+        agent = GeneratorAgent(model, tok, cfg)
         spec = TaskSpec("math", "single-turn", 1, 1)
         task = agent.generate(spec)
 
         assert task is not None
         assert task.gold_calls[0].name == "calculator"
 
-    def test_generate_returns_none_on_bad_output(self, cfg, registry):
+    def test_generate_returns_none_on_bad_output(self, cfg):
         tok = _make_fake_tokenizer(decode_output="garbage output with no tags")
         model = _make_fake_model(["garbage"])
 
-        agent = GeneratorAgent(model, tok, registry, cfg)
+        agent = GeneratorAgent(model, tok, cfg)
         task = agent.generate(TaskSpec("math", "single-turn", 1, 1))
         assert task is None
 
-    def test_build_prompt_contains_spec_info(self, cfg, registry):
+    def test_build_prompt_contains_spec_info(self, cfg):
         tok = MagicMock()
         tok.apply_chat_template.side_effect = lambda msgs, **kw: json.dumps(msgs)
-        agent = GeneratorAgent(MagicMock(), tok, registry, cfg)
+        agent = GeneratorAgent(MagicMock(), tok, cfg)
         prompt = agent.build_prompt(TaskSpec("math", "single-turn", 2, 1))
         assert "math" in prompt
         assert "single-turn" in prompt

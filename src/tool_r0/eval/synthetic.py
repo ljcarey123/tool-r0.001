@@ -7,7 +7,6 @@ from pathlib import Path
 
 from ..agents.generator import GeneratorAgent
 from ..data.models import GeneratedTask, TaskSpec
-from ..tools.registry import ToolRegistry
 from ..tools.schema import Tool, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 def create_eval_set(
     generator: GeneratorAgent,
-    registry: ToolRegistry,
     n: int,
     seed: int = 42,
 ) -> list[GeneratedTask]:
@@ -32,16 +30,7 @@ def create_eval_set(
 
     while len(tasks) < n and attempts < max_attempts:
         attempts += 1
-        n_tools = rng.randint(*config.n_tools_range)
-        n_tools = min(n_tools, len(registry))
-        n_calls = min(rng.randint(*config.n_calls_range), n_tools)
-        spec = TaskSpec(
-            domain=rng.choice(config.domains),
-            context="single-turn",
-            n_tools=n_tools,
-            n_calls=n_calls,
-        )
-        task = generator.generate(spec)
+        task = generator.generate(config.sample_spec(rng))
         if task is not None:
             tasks.append(task)
 
@@ -77,18 +66,13 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
     sample exactly matches the gold calls (same names and arguments).
     """
     from ..agents.parser import parse_solver_output
-    from ..tools.schema import ToolCall as TC
-
-    def _exact(pred: list[TC], gold: list[TC]) -> bool:
-        if len(pred) != len(gold):
-            return False
-        return {c.canonical() for c in pred} == {c.canonical() for c in gold}
+    from ..rewards.curriculum import exact_match
 
     hits = 0
     for task in tasks:
         text = solver.generate_greedy(task)
         predicted = parse_solver_output(text)
-        if predicted is not None and _exact(predicted, task.gold_calls):
+        if predicted is not None and exact_match(predicted, task.gold_calls):
             hits += 1
     return hits / len(tasks) if tasks else 0.0
 
@@ -112,7 +96,6 @@ def _task_to_dict(task: GeneratedTask) -> dict:
 
 
 def _task_from_dict(d: dict) -> GeneratedTask:
-    from ..data.models import TaskSpec
     return GeneratedTask(
         spec=TaskSpec(**d["spec"]),
         question=d["question"],
