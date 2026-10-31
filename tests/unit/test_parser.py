@@ -1,5 +1,11 @@
 import pytest
-from tool_r0.agents.parser import extract_tag, parse_generator_output, parse_solver_output
+from tool_r0.agents.parser import (
+    extract_tag,
+    load_lenient,
+    parse_generator_output,
+    parse_solver_output,
+    parse_tools,
+)
 
 
 VALID_GENERATOR_OUTPUT = """
@@ -33,6 +39,31 @@ class TestExtractTag:
         # Models often re-reason and emit a corrected final block; take the last.
         text = "<think>first</think><think>second</think>"
         assert extract_tag(text, "think") == "second"
+
+    def test_unclosed_final_block_runs_to_end(self):
+        # Small models often stop right after the last block without closing it
+        assert extract_tag("<think>a</think><tool_call_answer>[1]\n", "tool_call_answer") == "[1]"
+
+    def test_unclosed_block_followed_by_another_tag_is_rejected(self):
+        text = "<question>what?<available_tools>[]</available_tools>"
+        assert extract_tag(text, "question") is None
+
+
+class TestLenientRepairs:
+    def test_unclosed_answer_parses(self):
+        text = VALID_GENERATOR_OUTPUT.strip().removesuffix("</tool_call_answer>")
+        assert parse_generator_output(text) is not None
+
+    @pytest.mark.parametrize("split", [
+        '[{"name": "a", "description": "x", "parameters": {}}], {"name": "b", "description": "y", "parameters": {}}]',
+        '[{"name": "a", "description": "x", "parameters": {}}], [{"name": "b", "description": "y", "parameters": {}}]',
+    ])
+    def test_split_tool_list_is_merged(self, split):
+        tools = parse_tools(split)
+        assert tools is not None and [t.name for t in tools] == ["a", "b"]
+
+    def test_valid_nested_lists_are_untouched(self):
+        assert load_lenient('[{"a": [1]}, {"b": [{"c": 2}]}]') == [{"a": [1]}, {"b": [{"c": 2}]}]
 
 
 class TestParseGeneratorOutput:

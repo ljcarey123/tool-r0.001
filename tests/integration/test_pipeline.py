@@ -6,6 +6,8 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from tool_r0.config import Config
 from tool_r0.data.models import GeneratedTask, TaskSpec
 from tool_r0.data.pool import TaskPool
@@ -47,14 +49,15 @@ def _make_fake_tokenizer(decode_output: str = ""):
     tok.return_value = batch_encoding
 
     tok.decode.return_value = decode_output
+    tok.batch_decode.side_effect = lambda ids, **kw: [decode_output] * len(ids)
     return tok
 
 
 def _make_fake_model(outputs: list[str]):
     """
-    Model whose generate() returns successive strings from `outputs`.
-    Strings survive output[0:] slicing (since prompt_len=0) and are
-    passed to tokenizer.decode() which returns decode_output unchanged.
+    Model whose generate() returns a dummy token tensor with one row per sequence.
+    The fake tokenizer ignores the ids and returns its decode_output, so `outputs`
+    only sets how many calls are expected.
     """
     model = MagicMock()
     model.device = "cpu"
@@ -62,9 +65,8 @@ def _make_fake_model(outputs: list[str]):
 
     def fake_generate(**kwargs):
         n = kwargs.get("num_return_sequences", 1)
-        results = [outputs[call_count[0] % len(outputs)] for _ in range(n)]
         call_count[0] += 1
-        return results
+        return torch.zeros((n, 1), dtype=torch.long)
 
     model.generate.side_effect = fake_generate
     return model

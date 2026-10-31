@@ -23,7 +23,7 @@ def generator_format_reward(text: str) -> float:
         score += _W_TAG
 
     tools_raw = extract_tag(text, "available_tools")
-    if tools_raw and parse_tools(tools_raw) is not None:
+    if tools_raw and parse_tools(tools_raw) is not None and _all_declare_parameters(tools_raw):
         score += _W_PARSE
 
     calls_raw = extract_tag(text, "tool_call_answer")
@@ -31,6 +31,17 @@ def generator_format_reward(text: str) -> float:
         score += _W_NORM
 
     return score
+
+
+def _all_declare_parameters(tools_raw: str) -> bool:
+    """The parser fills in an empty schema for a tool without "parameters"; format credit
+    still requires every tool to declare one, so the Generator is not paid to omit them."""
+    try:
+        data = load_lenient(tools_raw)
+    except ValueError:
+        return False
+    items = data if isinstance(data, list) else [data]
+    return all(isinstance(t, dict) and isinstance(t.get("parameters"), dict) for t in items)
 
 
 def solver_format_reward(text: str) -> float:
@@ -46,7 +57,8 @@ def solver_format_reward(text: str) -> float:
         return 0.0
 
     score = 0.0
-    if "<think>" in text and "</think>" in text and calls_raw is not None:
+    # Tag credit needs properly closed blocks, even though parsing accepts an unclosed one
+    if all(t in text for t in ("<think>", "</think>", "<tool_call_answer>", "</tool_call_answer>")):
         score += _W_TAG
     if calls_raw:
         try:

@@ -15,7 +15,12 @@ def extract_tag(text: str, tag: str) -> str | None:
     often emit an initial reasoning pass before producing a corrected final block.
     """
     matches = re.findall(rf"<{re.escape(tag)}>(.*?)</{re.escape(tag)}>", text, re.DOTALL)
-    return matches[-1].strip() if matches else None
+    if matches:
+        return matches[-1].strip()
+    # Small models often stop right after the final block without closing it. Accept an
+    # unclosed block that runs to the end of the text, unless another tag opens inside it.
+    unclosed = re.search(rf"<{re.escape(tag)}>((?:(?!<[A-Za-z_]+>).)*)\Z", text, re.DOTALL)
+    return unclosed.group(1).strip() if unclosed else None
 
 
 def is_placeholder(text: str) -> bool:
@@ -25,19 +30,28 @@ def is_placeholder(text: str) -> bool:
 
 def load_lenient(raw: str) -> Any:
     """Parse a JSON-ish block: strict JSON, Python-literal syntax, or either inside a
-    markdown code fence (the paper's parser accepts all three). Raises ValueError."""
+    markdown code fence (the paper's parser accepts all three), falling back to
+    repairing a split list. Raises ValueError."""
     raw = raw.strip()
     fence = re.match(r"^```[a-zA-Z]*\s*(.*?)\s*```$", raw, re.DOTALL)
     if fence:
         raw = fence.group(1)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError, MemoryError, RecursionError) as exc:
-        raise ValueError("unparseable block") from exc
+    for candidate in (raw, _merge_split_lists(raw)):
+        for load in (json.loads, ast.literal_eval):
+            try:
+                data = load(candidate)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(data, tuple):  # `{a}, {b}` or `[{a}], [{b}]`: items with no outer list
+                data = [x for part in data for x in (part if isinstance(part, list) else [part])]
+            return data
+    raise ValueError("unparseable block")
+
+
+def _merge_split_lists(raw: str) -> str:
+    """Repair a list of objects closed after each item: `[{a}], {b}]` or `[{a}], [{b}]`
+    become `[{a}, {b}]`. Only used after strict parsing has failed."""
+    return re.sub(r"\}\s*\]\s*,\s*\[?\s*\{", "}, {", raw)
 
 
 def _unwrap_call(obj: Any) -> Any:

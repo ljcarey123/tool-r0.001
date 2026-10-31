@@ -38,11 +38,8 @@ def run_eval(
     format_hits = 0
     accuracy_total = 0.0
 
-    for i, task in enumerate(subset):
-        if i % 20 == 0:
-            logger.info("Eval progress: %d / %d", i, len(subset))
-
-        text = solver.generate_greedy(task)
+    logger.info("Evaluating %d examples", len(subset))
+    for task, text in zip(subset, solver.generate_greedy_batch(subset)):
         predicted = parse_solver_output(text)
 
         if predicted is not None:

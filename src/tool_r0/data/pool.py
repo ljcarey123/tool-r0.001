@@ -55,7 +55,10 @@ class TaskPool:
             difficulty = successes / k
             if difficulty > 0.0:  # discard tasks the solver never gets right
                 examples.append(SolverExample(task=task, difficulty=difficulty))
-        logger.debug("Cross-verify: %d → %d examples", len(tasks), len(examples))
+        logger.info(
+            "Cross-verify: %d → %d tasks solved at least once (pass rates: %s)",
+            len(tasks), len(examples), sorted(round(e.difficulty, 2) for e in examples),
+        )
         return examples
 
     def build_curriculum(

@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class Tool(BaseModel):
     name: str
     description: str
-    parameters: dict  # JSON Schema format
+    # JSON Schema format. Small models often omit it for argument-free-looking tools; the
+    # task is still usable, but the generator's format reward withholds credit for it.
+    parameters: dict = Field(
+        default_factory=lambda: {"type": "object", "properties": {}, "required": []}
+    )
 
     def to_dict(self) -> dict:
         return {"name": self.name, "description": self.description, "parameters": self.parameters}

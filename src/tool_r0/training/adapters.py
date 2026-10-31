@@ -38,6 +38,51 @@ def use_adapter(model, name: str | None) -> Iterator[None]:
         model.set_adapter(previous)
 
 
+@contextmanager
+def inference_mode(model) -> Iterator[None]:
+    """Put the model in eval mode for generation, restoring train mode afterwards.
+
+    TRL leaves the shared model in train mode with gradient checkpointing on (also while
+    reward functions run). In that state transformers drops the KV cache inside each layer
+    while generate() still feeds only the newest token, so outputs degenerate into
+    repetition. Eval mode disables checkpointing (and LoRA dropout); callers should also
+    pass use_cache=True, since TRL sets config.use_cache=False.
+    """
+    was_training = model.training
+    model.eval()
+    try:
+        yield
+    finally:
+        if was_training:
+            model.train()
+
+
+def generate_texts(
+    model, tokenizer, prompts: list[str], adapter: str | None, batch_size: int, **gen_kwargs
+) -> list[str]:
+    """Decode the completion for each prompt, generating `batch_size` prompts at a time.
+
+    Uses left padding so every completion starts right after its prompt.
+    """
+    texts: list[str] = []
+    previous_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        for i in range(0, len(prompts), batch_size):
+            inputs = tokenizer(
+                prompts[i : i + batch_size], return_tensors="pt", padding=True
+            ).to(model.device)
+            with use_adapter(model, adapter), inference_mode(model):
+                outputs = model.generate(
+                    **inputs, pad_token_id=tokenizer.pad_token_id, use_cache=True, **gen_kwargs
+                )
+            prompt_len = inputs["input_ids"].shape[1]
+            texts += tokenizer.batch_decode(outputs[:, prompt_len:], skip_special_tokens=True)
+    finally:
+        tokenizer.padding_side = previous_side
+    return texts
+
+
 def _dtype():
     import torch
 

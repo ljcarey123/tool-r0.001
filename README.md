@@ -132,6 +132,17 @@ adapters on one shared, frozen base model, so training fits on a 4 GB GPU and ch
 few MB. Adapters are saved to `./checkpoints/generator` and `./checkpoints/solver`
 (override with `--checkpoint-dir`).
 
+### On a cloud GPU (Modal)
+
+[modal_app.py](modal_app.py) runs the same commands on a Modal GPU (L4, falling back to A10G or T4 when capacity is short). Roughly $0.60–1.10/hour, billed per second.
+
+```bash
+pip install modal && modal token new                   # one-time setup
+modal run --detach modal_app.py::train --preset dev    # train; keeps running if you disconnect
+modal run modal_app.py::evaluate --run dev             # trained vs base
+modal volume get tool-r0-runs dev ./runs               # download adapters
+```
+
 ## Evaluate
 
 Two benchmarks are supported. Both compare the trained solver against the untrained base model.

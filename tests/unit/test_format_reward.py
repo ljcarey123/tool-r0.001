@@ -47,6 +47,14 @@ class TestGeneratorFormatReward:
         )
         assert generator_format_reward(text) == pytest.approx(0.7, abs=1e-6)
 
+    def test_tool_without_parameters_parses_but_loses_0_3(self):
+        # The parser fills in an empty schema, but omitting it earns no format credit
+        text = PERFECT_GENERATOR.replace(
+            ', "parameters": {"type": "object", "properties": {}, "required": []}}]', "}]", 1
+        )
+        assert '"parameters": {"type"' not in text
+        assert generator_format_reward(text) == pytest.approx(0.7, abs=1e-6)
+
     def test_invalid_calls_json_loses_0_4(self):
         text = PERFECT_GENERATOR.replace(
             '[{"name": "calculator", "parameters": {"expression": "2+2"}}]',
@@ -93,6 +101,10 @@ class TestSolverFormatReward:
     def test_calls_without_name_parse_but_do_not_normalise(self):
         text = '<think>ok</think><tool_call_answer>[{"parameters": {}}]</tool_call_answer>'
         assert solver_format_reward(text) == pytest.approx(0.6)
+
+    def test_unclosed_answer_parses_but_loses_tag_credit(self):
+        text = PERFECT_SOLVER.strip().removesuffix("</tool_call_answer>")
+        assert solver_format_reward(text) == pytest.approx(0.7)
 
     def test_placeholder_answer_scores_zero(self):
         text = "<think>ok</think><tool_call_answer>[...]</tool_call_answer>"

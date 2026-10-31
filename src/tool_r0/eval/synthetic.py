@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..agents.generator import GeneratorAgent
 from ..data.models import GeneratedTask, TaskSpec
+from ..rewards.validity import validity_reward
 from ..tools.schema import Tool, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,10 @@ def create_eval_set(
 ) -> list[GeneratedTask]:
     """
     Generate n tasks from the current (untrained) generator as a held-out eval set.
-    Uses a fixed seed so the set is reproducible.  May return fewer than n tasks
-    if the generator fails to produce valid output for some specs.
+    Uses a fixed seed so the set is reproducible.  Only fully valid tasks are kept
+    (gold tool in the menu, required arguments present, every value grounded in the
+    question): otherwise the gold values are invented and no solver can match them.
+    May return fewer than n tasks if the generator rarely produces valid output.
     """
     rng = random.Random(seed)
     config = generator.config
@@ -29,14 +32,17 @@ def create_eval_set(
     max_attempts = n * 10  # bail out rather than looping forever
 
     while len(tasks) < n and attempts < max_attempts:
-        attempts += 1
-        task = generator.generate(config.sample_spec(rng))
-        if task is not None:
-            tasks.append(task)
+        specs = [config.sample_spec(rng) for _ in range(config.generation_batch_size)]
+        attempts += len(specs)
+        tasks += [
+            t for t in generator.generate_batch(specs)
+            if t is not None and validity_reward(t) == 1.0
+        ]
+    tasks = tasks[:n]
 
     if len(tasks) < n:
         logger.warning(
-            "Eval set: generated %d / %d tasks (generator valid-parse rate: %.0f%%)",
+            "Eval set: generated %d / %d tasks (fully valid rate: %.0f%%)",
             len(tasks), n, 100 * len(tasks) / max(attempts, 1),
         )
     return tasks
@@ -69,8 +75,7 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
     from ..rewards.curriculum import exact_match
 
     hits = 0
-    for task in tasks:
-        text = solver.generate_greedy(task)
+    for task, text in zip(tasks, solver.generate_greedy_batch(tasks)):
         predicted = parse_solver_output(text)
         if predicted is not None and exact_match(predicted, task.gold_calls):
             hits += 1

@@ -5,7 +5,7 @@ import logging
 
 from ..config import Config
 from ..data.models import GeneratedTask, TaskSpec
-from ..training.adapters import use_adapter
+from ..training.adapters import generate_texts
 from . import parser
 
 logger = logging.getLogger(__name__)
@@ -63,21 +63,24 @@ class GeneratorAgent:
         self.adapter = adapter  # LoRA adapter to activate on a shared model
 
     def generate(self, spec: TaskSpec) -> GeneratedTask | None:
-        prompt = self.build_prompt(spec)
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        with use_adapter(self.model, self.adapter):
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.generator_max_tokens,
-                do_sample=True,
-                temperature=self.config.generation_temperature,
-                repetition_penalty=self.config.repetition_penalty,
-                num_return_sequences=1,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-        text = self.tokenizer.decode(
-            outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+        return self.generate_batch([spec])[0]
+
+    def generate_batch(self, specs: list[TaskSpec]) -> list[GeneratedTask | None]:
+        """One sampled task per spec (None where the output does not parse)."""
+        texts = generate_texts(
+            self.model,
+            self.tokenizer,
+            [self.build_prompt(s) for s in specs],
+            self.adapter,
+            self.config.generation_batch_size,
+            max_new_tokens=self.config.generator_max_tokens,
+            do_sample=True,
+            temperature=self.config.generation_temperature,
+            repetition_penalty=self.config.repetition_penalty,
         )
+        return [self._parse(spec, text) for spec, text in zip(specs, texts)]
+
+    def _parse(self, spec: TaskSpec, text: str) -> GeneratedTask | None:
         logger.debug("Generator raw output:\n%s", text[:1500])
         parsed = parser.parse_generator_output(text)
         if parsed is None:

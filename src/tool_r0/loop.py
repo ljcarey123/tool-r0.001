@@ -157,9 +157,10 @@ class SelfPlayLoop:
             completions: list[str],
             **_,
         ) -> list[float]:
-            rewards = []
+            rewards, fmt, val, cur = [], [], [], []
             for completion in completions:
                 r_fmt = generator_format_reward(completion)
+                fmt.append(r_fmt)
                 parsed = parse_generator_output(completion)
                 if parsed is None:
                     rewards.append(r_fmt)
@@ -173,7 +174,10 @@ class SelfPlayLoop:
                 )
                 r_val = validity_reward(task)
                 r_cur = curriculum_reward(task, solver_ref, self.config)
+                val.append(r_val)
+                cur.append(r_cur)
                 rewards.append(r_fmt + r_val + r_cur)
+            _log_rewards("Generator", len(completions), r_fmt=fmt, r_valid=val, r_curr=cur)
             return rewards
 
         # Only the generator adapter is trainable while it is active. The curriculum
@@ -196,12 +200,8 @@ class SelfPlayLoop:
 
     def _build_curriculum(self) -> list[SolverExample]:
         logger.info("Sampling %d tasks from frozen Generator…", self.config.task_pool_size)
-        raw: list[GeneratedTask] = []
-        for _ in range(self.config.task_pool_size):
-            spec = self.config.sample_spec()
-            task = self.generator.generate(spec)
-            if task is not None:
-                raw.append(task)
+        specs = [self.config.sample_spec() for _ in range(self.config.task_pool_size)]
+        raw = [t for t in self.generator.generate_batch(specs) if t is not None]
         logger.info("Valid tasks: %d / %d", len(raw), self.config.task_pool_size)
 
         deduped = self.pool.deduplicate(raw)
@@ -230,9 +230,10 @@ class SelfPlayLoop:
             gold_calls: list[str] | None = None,
             **_,
         ) -> list[float]:
-            rewards = []
+            rewards, fmt, acc = [], [], []
             for i, completion in enumerate(completions):
                 r_fmt = solver_format_reward(completion)
+                fmt.append(r_fmt)
                 from .agents.parser import parse_solver_output
                 predicted = parse_solver_output(completion)
                 if predicted is None or gold_calls is None or i >= len(gold_calls):
@@ -240,7 +241,9 @@ class SelfPlayLoop:
                     continue
                 gold = [ToolCall(**c) for c in json.loads(gold_calls[i])]
                 r_acc = accuracy_reward(predicted, gold, config_ref)
+                acc.append(r_acc)
                 rewards.append(r_fmt + r_acc)
+            _log_rewards("Solver", len(completions), r_fmt=fmt, r_acc=acc)
             return rewards
 
         with use_adapter(self.model, SOLVER_ADAPTER):
@@ -255,3 +258,16 @@ class SelfPlayLoop:
                 n_steps=self.config.solver_steps,
                 max_completion_length=self.config.solver_max_tokens,
             )
+
+
+def _log_rewards(role: str, n: int, **components: list[float]) -> None:
+    """Log the mean of each reward component for one GRPO batch.
+
+    Components after the first are only computed for parsed completions, so their means
+    are over that subset; the parse count is logged alongside.
+    """
+    parsed = len(next(iter(list(components.values())[1:]), []))
+    means = "  ".join(
+        f"{name}={sum(v) / len(v):.2f}" if v else f"{name}=n/a" for name, v in components.items()
+    )
+    logger.info("%s rewards: parsed=%d/%d  %s", role, parsed, n, means)

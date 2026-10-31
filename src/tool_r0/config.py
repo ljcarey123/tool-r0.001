@@ -42,6 +42,7 @@ class Config:
     grpo_temperature: float = 1.0   # temperature used during GRPO rollouts
     generation_temperature: float = 0.7  # temperature for inference outside of GRPO (curriculum, eval)
     repetition_penalty: float = 1.0  # >1 penalises the repeated braces/quotes/keys that JSON needs
+    generation_batch_size: int = 16  # prompts per generate() call when building pools and evaluating
     # Paper uses 1e-6 for full fine-tuning; LoRA typically needs ~10x higher.
     learning_rate: float = 2e-5
 
@@ -100,6 +101,18 @@ class Config:
 # "dev" is a fast end-to-end check of the full loop at reduced scale;
 # "full" is the paper's schedule at a pool size that fits a single small GPU.
 PRESETS: dict[str, dict] = {
+    # A few minutes: checks every stage produces a healthy signal, not that learning happens
+    "smoke": {
+        "n_iterations": 1,
+        "generator_steps": 3,
+        "solver_steps": 3,
+        "task_pool_size": 16,
+        "curriculum_size": 8,
+        "mc_samples": 4,
+        "eval_set_size": 16,
+        "generator_max_tokens": 768,
+        "solver_max_tokens": 256,
+    },
     "dev": {
         "n_iterations": 1,
         "generator_steps": 10,
