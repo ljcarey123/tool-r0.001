@@ -47,7 +47,21 @@ class GRPOTrainer:
         def trl_reward_fn(completions: list[str], **kwargs) -> list[float | None]:
             prompts_batch = kwargs.get("prompt", [""] * len(completions))
             extra = {k: kwargs[k] for k in self.extra_columns if k in kwargs}
-            return reward_fn(prompts_batch, completions, **extra)  # type: ignore[return-value]
+            try:
+                return reward_fn(prompts_batch, completions, **extra)  # type: ignore[return-value]
+            except Exception:
+                # Completions are arbitrary model text; one that breaks a reward function
+                # should score 0, not end a long training run. Rescore one at a time.
+                logger.exception("Reward function failed; rescoring completions individually")
+                return [_score_one(i, prompts_batch, completions, extra) for i in range(len(completions))]
+
+        def _score_one(i: int, prompts_batch, completions, extra) -> float:
+            try:
+                one_extra = {k: v[i : i + 1] for k, v in extra.items()}
+                return reward_fn(prompts_batch[i : i + 1], completions[i : i + 1], **one_extra)[0]
+            except Exception:
+                logger.warning("Scoring 0 for completion that breaks the reward: %r", completions[i][:200])
+                return 0.0
 
         import torch
         use_cuda = torch.cuda.is_available()

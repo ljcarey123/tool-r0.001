@@ -64,9 +64,11 @@ class SelfPlayLoop:
 
         eval_set = self._get_or_create_eval_set()
 
-        if start_iter == 0 and eval_set:
-            baseline = eval_pass_at_1(self.solver, eval_set)
-            logger.info("Baseline pass@1 (untrained): %.3f over %d tasks", baseline, len(eval_set))
+        if eval_set and start_iter < self.config.n_iterations:
+            # Also on resume: prompts or evaluation may have changed since the last run
+            score = eval_pass_at_1(self.solver, eval_set)
+            label = "Baseline pass@1 (untrained)" if start_iter == 0 else "Pass@1 at resume"
+            logger.info("%s: %.3f over %d tasks", label, score, len(eval_set))
 
         for i in range(start_iter, self.config.n_iterations):
             logger.info("=== Self-play iteration %d / %d ===", i + 1, self.config.n_iterations)

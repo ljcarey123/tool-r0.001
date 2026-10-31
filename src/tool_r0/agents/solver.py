@@ -24,11 +24,17 @@ _SYSTEM_PROMPT = (
     "</tool_call_answer>."
 )
 
+# The closing format reminder is not in the paper's prompt. Without it the 0.5B base
+# model mostly answers in prose (2/16 parsed on valid eval tasks vs 13/16 with it).
 _USER_TEMPLATE = """\
 Available tools:
 {tools}
 
 User request: {question}
+
+Answer in exactly this format:
+<think>which tool fits and which values from the request to use</think>
+<tool_call_answer>[{{"name": "<tool name>", "arguments": {{"<parameter>": <value copied from the request>}}}}]</tool_call_answer>
 """
 
 # Semantic-coherence judge (paper Fig. 11): the Solver rates a generated task 1–5.

@@ -40,7 +40,7 @@ def load_lenient(raw: str) -> Any:
         for load in (json.loads, ast.literal_eval):
             try:
                 data = load(candidate)
-            except (ValueError, SyntaxError, MemoryError, RecursionError):
+            except Exception:  # literal_eval also raises TypeError, e.g. `{{...}}` is a set of dicts
                 continue
             if isinstance(data, tuple):  # `{a}, {b}` or `[{a}], [{b}]`: items with no outer list
                 data = [x for part in data for x in (part if isinstance(part, list) else [part])]

@@ -54,9 +54,11 @@ def train(preset: str = "dev", run: str = "", extra: str = "") -> None:
 
 
 @app.function(gpu=GPU, volumes=VOLUMES, timeout=1800)
-def diagnose(temps: str = "0.7,0.85,1.0", n: int = 32, run: str = "") -> None:
-    """Generator parse/validity rates per temperature (~1-2 GPU minutes). `run` uses trained adapters."""
-    args = ["--temps", temps, "--n", str(n)] + (["--checkpoint", f"/runs/{run}"] if run else [])
+def diagnose(temps: str = "0.7,0.85,1.0", n: int = 32, run: str = "", extra: str = "") -> None:
+    """Generator parse/validity rates per temperature (~1-2 GPU minutes). `run` uses trained adapters.
+    `extra` passes further flags, e.g. --extra "--dtype float32 --dump 5"."""
+    args = ["--temps", temps, "--n", str(n), *extra.split()]
+    args += ["--checkpoint", f"/runs/{run}"] if run else []
     subprocess.run(["python", "/root/scripts/diag_generator.py", *args], check=True)
 
 

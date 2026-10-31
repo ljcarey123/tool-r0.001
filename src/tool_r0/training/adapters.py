@@ -106,13 +106,16 @@ def load_base_model(model_name: str):
     return tokenizer, model
 
 
-def load_shared_model(config: Config, checkpoint_dir: Path | None = None):
+def load_shared_model(config: Config, checkpoint_dir: str | Path | None = None):
     """Load the base model with `generator` and `solver` LoRA adapters attached.
 
     Fresh adapters are created when `checkpoint_dir` is None; otherwise both
     adapters are restored from `checkpoint_dir/generator` and `checkpoint_dir/solver`.
     """
     from peft import LoraConfig, PeftModel, get_peft_model
+
+    if checkpoint_dir is not None:
+        checkpoint_dir = Path(checkpoint_dir)
 
     tokenizer, base = load_base_model(config.model_name)
 

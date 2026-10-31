@@ -62,6 +62,11 @@ class TestLenientRepairs:
         tools = parse_tools(split)
         assert tools is not None and [t.name for t in tools] == ["a", "b"]
 
+    def test_set_of_dicts_is_unparseable_not_a_crash(self):
+        # literal_eval raises TypeError on `{{...}}` (a set containing a dict)
+        with pytest.raises(ValueError):
+            load_lenient('{{"name": "a", "arguments": {}}}')
+
     def test_valid_nested_lists_are_untouched(self):
         assert load_lenient('[{"a": [1]}, {"b": [{"c": 2}]}]') == [{"a": [1]}, {"b": [{"c": 2}]}]
 
