@@ -68,13 +68,19 @@ class GRPOTrainer:
         use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
         use_fp16 = use_cuda and not use_bf16
 
+        rollouts, micro = self.config.grpo_rollouts, self.config.grpo_micro_batch
+        if rollouts % micro:
+            raise ValueError(f"grpo_rollouts ({rollouts}) must be divisible by grpo_micro_batch ({micro})")
+
         grpo_config = GRPOConfig(
             output_dir="./grpo_output",
             max_steps=n_steps,
-            # Batch size counts completions: one prompt x its rollouts per step. Tying it to
-            # num_generations keeps it valid however few prompts the curriculum yields.
-            per_device_train_batch_size=self.config.grpo_rollouts,
-            num_generations=self.config.grpo_rollouts,
+            # Batch size counts completions: one prompt x its rollouts per step, split into
+            # micro-batches by gradient accumulation (TRL generates the whole group at once).
+            # Tying it to num_generations keeps it valid however few prompts the curriculum yields.
+            per_device_train_batch_size=micro,
+            gradient_accumulation_steps=rollouts // micro,
+            num_generations=rollouts,
             temperature=self.config.grpo_temperature,
             max_completion_length=max_completion_length,
             learning_rate=self.config.learning_rate,
