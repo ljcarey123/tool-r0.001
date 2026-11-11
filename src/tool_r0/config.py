@@ -40,8 +40,9 @@ class Config:
     # GRPO
     grpo_rollouts: int = 4
     # Completions per forward/backward pass; the rest is gradient accumulation, so each
-    # step still trains on one group of `grpo_rollouts`. 2 keeps a 4 GB GPU below its limit.
-    grpo_micro_batch: int = 2
+    # step still trains on one group of `grpo_rollouts`. On a 4 GB GPU, 2 ran out of memory
+    # on long generator completions; raise it on bigger GPUs for speed.
+    grpo_micro_batch: int = 1
     grpo_temperature: float = 1.0   # temperature used during GRPO rollouts
     generation_temperature: float = 0.7  # temperature for inference outside of GRPO (curriculum, eval)
     repetition_penalty: float = 1.0  # >1 penalises the repeated braces/quotes/keys that JSON needs

@@ -74,7 +74,7 @@ The parser accepts strict JSON, Python-literal syntax, code-fenced blocks and Op
 | Fine-tuning | LoRA r=16, α=32 | Full | Fits a 4 GB GPU |
 | Learning rate | 2e-5 | 1e-6 | LoRA needs a higher rate |
 | KL β | 0 | 0.01 | Named adapters have no reference copy in TRL; ToolRL also found KL hurts |
-| Batch | 4 completions/step, back-propagated 2 at a time | 24–32 | Memory (peaks near 4 GB otherwise) |
+| Batch | 4 completions/step, back-propagated 1 at a time (`grpo_micro_batch`) | 24–32 | Memory: 2 at a time ran out of 4 GB on long generator completions |
 | Solver prompt | paper prompt + a closing format reminder | paper prompt | The 0.5B base model mostly answered in prose (2/16 valid tasks parsed vs 11/16) |
 | Task pool | 500 → 200 | 10k → 2k | Compute |
 | Context | single-turn | 10% multi-turn | Scope |
