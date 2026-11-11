@@ -1,130 +1,140 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
 
 from ..data.models import GeneratedTask, TaskSpec
+from ..rewards.accuracy import values_match
 from ..tools.schema import Tool, ToolCall
 
 logger = logging.getLogger(__name__)
 
 # Berkeley Function Calling Leaderboard v3
 # HuggingFace: https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard
-# We use the "live_simple" split: single-turn, one function, structured JSON gold calls.
-_DATASET_ID = "gorilla-llm/Berkeley-Function-Calling-Leaderboard"
+# The repo holds raw JSON-lines files rather than a loadable dataset: questions in
+# BFCL_v3_<split>.json and allowed answers in possible_answer/BFCL_v3_<split>.json.
+_REPO_ID = "gorilla-llm/Berkeley-Function-Calling-Leaderboard"
 _DEFAULT_SPLIT = "live_simple"
 
 
+@dataclass
+class BFCLTask(GeneratedTask):
+    # BFCL ground truth: one {function_name: {param: [allowed values]}} per call. An empty
+    # string among the allowed values marks the parameter as optional.
+    ground_truth: list[dict[str, dict[str, list[Any]]]] = field(default_factory=list)
+
+
 def load_bfcl(split: str = _DEFAULT_SPLIT, n: int | None = None) -> list[GeneratedTask]:
+    """Load the first `n` BFCL examples of `split` as BFCLTasks.
+
+    `gold_calls` holds one concrete answer (the first allowed value of each required
+    parameter) for the shaped accuracy reward; `bfcl_match` checks the full ground truth.
     """
-    Load BFCL examples and convert to GeneratedTask objects.
-
-    Each BFCL example has:
-      - question: list of chat messages (we use the last user message)
-      - function: list of OpenAI-style function schemas  →  available_tools
-      - possible_answer: list of possible gold calls (we take the first)   →  gold_calls
-
-    The function schema format is compatible with our Tool model:
-      {"name": str, "description": str, "parameters": {"type": "object", "properties": {...}}}
-
-    The gold call format uses "arguments" (OpenAI convention), which our ToolCall
-    model already accepts via its _accept_arguments_alias validator.
-    """
-    try:
-        from datasets import load_dataset  # type: ignore[import-untyped]
-    except ImportError:
-        logger.error("'datasets' package required. Run: pip install datasets")
-        return []
+    from huggingface_hub import hf_hub_download
 
     logger.info("Loading BFCL split '%s' from HuggingFace …", split)
     try:
-        ds = load_dataset(_DATASET_ID, split=split, trust_remote_code=False)
+        questions = _read_jsonl(hf_hub_download(_REPO_ID, f"BFCL_v3_{split}.json", repo_type="dataset"))
+        answers = _read_jsonl(
+            hf_hub_download(_REPO_ID, f"possible_answer/BFCL_v3_{split}.json", repo_type="dataset")
+        )
     except Exception as exc:
         logger.error(
-            "Failed to load BFCL dataset '%s' (split: %s): %s\n"
-            "Check your internet connection or the split name. "
-            "Available splits include: live_simple, live_multiple, live_parallel.",
-            _DATASET_ID, split, exc,
+            "Failed to download BFCL split '%s': %s\n"
+            "Check your internet connection or the split name (e.g. live_simple, simple).",
+            split, exc,
         )
         return []
 
-    if len(ds) == 0:
-        logger.warning("BFCL split '%s' is empty.", split)
-        return []
-
-    logger.debug("BFCL first-row keys: %s", list(ds[0].keys()))
-
+    answers_by_id = {a["id"]: a for a in answers}
+    rows = questions if n is None else questions[:n]
     examples: list[GeneratedTask] = []
-    skipped = 0
-    rows = ds if n is None else ds.select(range(min(n, len(ds))))
-
     for row in rows:
-        task = _parse_row(row)
-        if task is None:
-            skipped += 1
-        else:
+        task = _parse_row(row, answers_by_id.get(row.get("id")))
+        if task is not None:
             examples.append(task)
 
-    if skipped:
-        logger.warning("Skipped %d / %d BFCL rows that could not be parsed.", skipped, len(rows))
+    if len(examples) < len(rows):
+        logger.warning("Skipped %d / %d BFCL rows that could not be parsed.", len(rows) - len(examples), len(rows))
     logger.info("Loaded %d BFCL examples.", len(examples))
     return examples
 
 
-def _parse_row(row: dict) -> GeneratedTask | None:
+def _read_jsonl(path: str) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _parse_row(row: dict, answer: dict | None) -> BFCLTask | None:
     try:
-        # --- Question ---
-        messages = row.get("question") or []
-        if isinstance(messages, list) and messages:
-            # Take the last user message
-            user_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "user"]
-            question = user_msgs[-1].get("content", "") if user_msgs else str(messages[-1])
-        else:
-            question = str(messages)
-        if not question:
+        # Questions are a list of turns, each a list of messages; use the last user message.
+        messages = [m for turn in row.get("question") or [] for m in turn]
+        user_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "user"]
+        question = user_msgs[-1].get("content", "") if user_msgs else ""
+
+        tools = [
+            Tool(name=f["name"], description=f.get("description", ""), **(
+                {"parameters": f["parameters"]} if isinstance(f.get("parameters"), dict) else {}
+            ))
+            for f in row.get("function") or []
+            if isinstance(f, dict) and f.get("name")
+        ]
+
+        ground_truth = (answer or {}).get("ground_truth") or []
+        gold_calls = [_first_allowed_call(gt) for gt in ground_truth]
+        if not question or not tools or not gold_calls:
             return None
 
-        # --- Available tools ---
-        funcs = row.get("function") or []
-        if isinstance(funcs, str):
-            import json
-            funcs = json.loads(funcs)
-        tools: list[Tool] = []
-        for f in funcs:
-            if not isinstance(f, dict):
-                continue
-            name = f.get("name", "")
-            description = f.get("description", "")
-            parameters = f.get("parameters", {"type": "object", "properties": {}, "required": []})
-            if name:
-                tools.append(Tool(name=name, description=description, parameters=parameters))
-        if not tools:
-            return None
-
-        # --- Gold calls ---
-        # possible_answer is a list of valid answers; take the first.
-        # Each answer is a list of call dicts: {"name": str, "arguments": {...}}
-        possible = row.get("possible_answer") or row.get("ground_truth") or []
-        if isinstance(possible, str):
-            import json
-            possible = json.loads(possible)
-        if not possible:
-            return None
-        first_answer = possible[0] if isinstance(possible[0], list) else possible
-        gold_calls: list[ToolCall] = []
-        for call in first_answer:
-            if isinstance(call, dict) and call.get("name"):
-                gold_calls.append(ToolCall(**call))  # accepts "arguments" via validator
-        if not gold_calls:
-            return None
-
-        spec = TaskSpec(
-            domain="bfcl",
-            context="single-turn",
-            n_tools=len(tools),
-            n_calls=len(gold_calls),
-        )
-        return GeneratedTask(spec=spec, question=question, available_tools=tools, gold_calls=gold_calls)
-
+        spec = TaskSpec(domain="bfcl", context="single-turn", n_tools=len(tools), n_calls=len(gold_calls))
+        return BFCLTask(spec, question, tools, gold_calls, ground_truth=ground_truth)
     except Exception as exc:
-        logger.debug("Failed to parse BFCL row: %s", exc)
+        logger.debug("Failed to parse BFCL row %s: %s", row.get("id"), exc)
         return None
+
+
+def _first_allowed_call(gt: dict[str, dict[str, list[Any]]]) -> ToolCall:
+    """A concrete gold call: the first allowed value of every required parameter."""
+    ((name, allowed),) = gt.items()
+    return ToolCall(name=name, parameters={p: v[0] for p, v in allowed.items() if "" not in v and v})
+
+
+def bfcl_match(predicted: list[ToolCall], ground_truth: list[dict[str, dict[str, list[Any]]]]) -> bool:
+    """BFCL-style AST match: same number of calls, each matching a distinct ground-truth call."""
+    if len(predicted) != len(ground_truth):
+        return False
+    unused = list(ground_truth)
+    for call in predicted:
+        hit = next((gt for gt in unused if _call_matches(call, gt)), None)
+        if hit is None:
+            return False
+        unused.remove(hit)
+    return True
+
+
+def _call_matches(call: ToolCall, gt: dict[str, dict[str, list[Any]]]) -> bool:
+    ((name, allowed),) = gt.items()
+    if call.name != name or any(p not in allowed for p in call.parameters):
+        return False
+    for param, values in allowed.items():
+        if param in call.parameters:
+            if not any(_value_ok(call.parameters[param], v) for v in values if v != ""):
+                return False
+        elif "" not in values:  # a required parameter is missing
+            return False
+    return True
+
+
+def _value_ok(pred: Any, allowed: Any) -> bool:
+    """BFCL compares strings case-insensitively, ignoring spaces and some punctuation."""
+    if isinstance(pred, str) and isinstance(allowed, str):
+        return _standardise(pred) == _standardise(allowed)
+    if isinstance(pred, list) and isinstance(allowed, list):
+        return len(pred) == len(allowed) and all(_value_ok(p, a) for p, a in zip(pred, allowed))
+    return values_match(pred, allowed)
+
+
+def _standardise(s: str) -> str:
+    return re.sub(r"[ ,./\-_*^]", "", s.lower())

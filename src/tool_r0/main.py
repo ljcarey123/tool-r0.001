@@ -64,7 +64,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
         logger.error("Cannot determine base model name. Pass --model explicitly.")
         sys.exit(1)
 
-    # Load benchmark examples
+    # Load benchmark examples (match=None: exact match against gold_calls)
+    match = None
     if args.benchmark == "synthetic":
         from .eval.synthetic import load_eval_set
         eval_path = Path(checkpoint).parent / "eval_set.json"
@@ -78,10 +79,11 @@ def cmd_eval(args: argparse.Namespace) -> None:
             sys.exit(1)
         logger.info("Loaded %d synthetic eval tasks.", len(examples))
     elif args.benchmark == "bfcl":
-        from .eval.bfcl import load_bfcl
+        from .eval.bfcl import bfcl_match, load_bfcl
         examples = load_bfcl(split=args.bfcl_split, n=args.n)
         if not examples:
             sys.exit(1)
+        match = lambda task, predicted: bfcl_match(predicted, task.ground_truth)  # noqa: E731
     else:
         logger.error("Unknown benchmark: %s", args.benchmark)
         sys.exit(1)
@@ -90,12 +92,14 @@ def cmd_eval(args: argparse.Namespace) -> None:
     base_config = Config(model_name=base_model)
 
     logger.info("Evaluating trained solver …")
-    result_trained = run_eval(SolverAgent(mdl, tok, trained_config), examples, trained_config, n=args.n)
+    result_trained = run_eval(
+        SolverAgent(mdl, tok, trained_config), examples, trained_config, n=args.n, match=match
+    )
     del mdl
 
     logger.info("Evaluating baseline model %s …", base_model)
     tok, mdl = load_base_model(base_model)
-    result_base = run_eval(SolverAgent(mdl, tok, base_config), examples, base_config, n=args.n)
+    result_base = run_eval(SolverAgent(mdl, tok, base_config), examples, base_config, n=args.n, match=match)
 
     benchmark_label = {
         "synthetic": "Synthetic held-out",
@@ -107,13 +111,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
     print(f"{'='*58}")
     print(f"  {'Metric':<22} {'Baseline':>10} {'Trained':>10}  {'Δ':>8}")
     print(f"  {'-'*50}")
-    fmt_d = result_trained.format_rate - result_base.format_rate
-    acc_d = result_trained.accuracy - result_base.accuracy
-    print(f"  {'Format rate':<22} {result_base.format_rate:>9.1%} {result_trained.format_rate:>9.1%}  {fmt_d:>+8.1%}")
-    if args.benchmark == "synthetic":
-        print(f"  {'Pass@1 (exact match)':<22} {result_base.accuracy:>10.3f} {result_trained.accuracy:>10.3f}  {acc_d:>+8.3f}")
-    else:
-        print(f"  {'Accuracy (−3..3)':<22} {result_base.accuracy:>10.3f} {result_trained.accuracy:>10.3f}  {acc_d:>+8.3f}")
+    for label, attr in [("Format rate", "format_rate"), ("Exact match (pass@1)", "exact_rate"),
+                        ("Accuracy reward (0..1)", "accuracy")]:
+        base, trained = getattr(result_base, attr), getattr(result_trained, attr)
+        print(f"  {label:<22} {base:>10.3f} {trained:>10.3f}  {trained - base:>+8.3f}")
     print(f"{'='*58}\n")
 
 
