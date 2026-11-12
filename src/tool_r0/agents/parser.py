@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import warnings
 from typing import Any
 
 from ..tools.schema import Tool, ToolCall
@@ -37,7 +38,7 @@ def load_lenient(raw: str) -> Any:
     if fence:
         raw = fence.group(1)
     for candidate in (raw, _merge_split_lists(raw)):
-        for load in (json.loads, ast.literal_eval):
+        for load in (json.loads, _literal_eval_quietly):
             try:
                 data = load(candidate)
             except Exception:  # literal_eval also raises TypeError, e.g. `{{...}}` is a set of dicts
@@ -46,6 +47,13 @@ def load_lenient(raw: str) -> Any:
                 data = [x for part in data for x in (part if isinstance(part, list) else [part])]
             return data
     raise ValueError("unparseable block")
+
+
+def _literal_eval_quietly(raw: str) -> Any:
+    """ast.literal_eval without the SyntaxWarnings that model text such as "\\d" triggers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.literal_eval(raw)
 
 
 def _merge_split_lists(raw: str) -> str:
