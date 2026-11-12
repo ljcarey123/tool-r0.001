@@ -101,3 +101,13 @@ class GRPOTrainer:
         )
         trainer.train()
         logger.info("GRPO training complete (%d steps)", n_steps)
+
+        # Release the trainer's optimizer state and cached activations before the next
+        # generation phase: on a 4 GB GPU, batched generation straight after training
+        # failed inside cuBLAS while the training allocations were still cached.
+        import gc
+
+        del trainer
+        gc.collect()
+        if use_cuda:
+            torch.cuda.empty_cache()

@@ -38,8 +38,9 @@ class SelfPlayLoop:
       4. Save a checkpoint (both models + state).
 
     Checkpoints are written to `config.checkpoint_dir` after every completed
-    iteration, so training can be resumed after a crash by re-running the same
-    command — the loop detects the state file and skips completed iterations.
+    iteration and after each generator phase, so training can be resumed after a
+    crash by re-running the same command — the loop detects the state file and
+    skips completed work.
     """
 
     def __init__(self, config: Config) -> None:
@@ -47,6 +48,7 @@ class SelfPlayLoop:
         self.pool = TaskPool(config)
         # Initialised in run() before any private methods are called.
         self.model = None  # shared PeftModel holding the generator + solver adapters
+        self._generator_already_trained = False  # set by _init from a mid-iteration checkpoint
         self.generator: GeneratorAgent
         self.solver: SolverAgent
 
@@ -72,13 +74,18 @@ class SelfPlayLoop:
 
         for i in range(start_iter, self.config.n_iterations):
             logger.info("=== Self-play iteration %d / %d ===", i + 1, self.config.n_iterations)
-            self._train_generator()
+            if i == start_iter and self._generator_already_trained:
+                logger.info("Generator already trained for this iteration — resuming at the task pool")
+            else:
+                self._train_generator()
+                # Mid-iteration checkpoint: generator training is the slowest phase
+                self._save_checkpoint(completed=i, generator_trained=True)
             curriculum = self._build_curriculum()
             if not curriculum:
                 logger.warning("Empty curriculum — skipping Solver training this iteration")
             else:
                 self._train_solver(curriculum)
-            self._save_checkpoint(i)
+            self._save_checkpoint(completed=i + 1)
 
             if eval_set:
                 score = eval_pass_at_1(self.solver, eval_set)
@@ -98,6 +105,7 @@ class SelfPlayLoop:
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
             completed = state.get("completed_iterations", 0)
+            self._generator_already_trained = bool(state.get("generator_trained"))
             if completed >= self.config.n_iterations:
                 logger.info("All %d iterations already completed.", self.config.n_iterations)
                 completed = self.config.n_iterations
@@ -126,15 +134,24 @@ class SelfPlayLoop:
             save_eval_set(tasks, eval_path)
         return tasks
 
-    def _save_checkpoint(self, iteration: int) -> None:
+    def _save_checkpoint(self, completed: int, generator_trained: bool = False) -> None:
+        """Save both adapters and the loop state.
+
+        `generator_trained` marks that iteration `completed + 1` has already finished its
+        generator training, so a resume continues from the task pool.
+        """
         ckpt = Path(self.config.checkpoint_dir)
         ckpt.mkdir(parents=True, exist_ok=True)
 
-        logger.info("Saving checkpoint after iteration %d …", iteration + 1)
+        logger.info(
+            "Saving checkpoint (%d iterations completed%s) …",
+            completed, ", next generator trained" if generator_trained else "",
+        )
         save_adapters(self.model, ckpt)
 
         state = {
-            "completed_iterations": iteration + 1,
+            "completed_iterations": completed,
+            "generator_trained": generator_trained,
             "model_name": self.config.model_name,
             "n_iterations": self.config.n_iterations,
             "config": dataclasses.asdict(self.config),
