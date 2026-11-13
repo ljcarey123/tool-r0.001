@@ -6,12 +6,18 @@ Tests whether a training gain is a capability gain rather than format learning:
   - paired comparisons count, on the same examples, which model alone gets each one right.
 
     python scripts/eval_compare.py --checkpoint runs/full/solver --splits live_simple,simple
+
+Variants are "<model>/<format>[+option...]": model base|trained, format paper|qwen, options
+nothink (pre-fill an empty <think> block), tagged / labels (paper-format prompt template).
+Both models default to the prompt settings the checkpoint's run was trained with.
 """
 import argparse
+import dataclasses
 import gc
 import json
 import logging
 from math import comb
+from pathlib import Path
 
 import torch
 
@@ -21,23 +27,36 @@ from tool_r0.eval.bfcl import bfcl_match, load_bfcl
 from tool_r0.eval.runner import EvalResult, run_eval
 from tool_r0.training.adapters import load_base_model, load_solver_for_eval
 
-FORMATS = ("paper", "qwen")
-PAIRS = [  # (A, B): is A better than B on the same examples?
+DEFAULT_VARIANTS = "base/paper,base/qwen,trained/paper,trained/qwen"
+DEFAULT_PAIRS = [  # (A, B): is A better than B on the same examples?
     ("trained/paper", "base/qwen"),   # headline vs the fair baseline
     ("trained/qwen", "base/qwen"),    # does the trained adapter help in the native format too?
     ("trained/paper", "base/paper"),  # the comparison the README originally reported
 ]
+OPTIONS = {
+    "nothink": {"solver_answer_prefix": "<think>\n</think>\n"},
+    "tagged": {"solver_prompt": "tagged"},
+    "labels": {"solver_prompt": "labels"},
+}
 
 
 def match(task, predicted):
     return bfcl_match(predicted, task.ground_truth)
 
 
-def evaluate(model, tok, examples) -> dict[str, EvalResult]:
+def variant_config(run_cfg: Config, variant: str) -> Config:
+    fmt, *options = variant.split("/", 1)[1].split("+")
+    overrides: dict = {"solver_format": fmt}
+    for opt in options:
+        overrides.update(OPTIONS[opt])
+    return dataclasses.replace(run_cfg, **overrides)
+
+
+def evaluate(model, tok, examples, run_cfg: Config, variants: list[str]) -> dict[str, EvalResult]:
     results = {}
-    for fmt in FORMATS:
-        cfg = Config(solver_format=fmt)
-        results[fmt] = run_eval(SolverAgent(model, tok, cfg), examples, cfg, n=len(examples), match=match)
+    for v in variants:
+        cfg = variant_config(run_cfg, v)
+        results[v] = run_eval(SolverAgent(model, tok, cfg), examples, cfg, n=len(examples), match=match)
     return results
 
 
@@ -50,7 +69,7 @@ def mcnemar_p(b: int, c: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def report(split: str, results: dict[str, EvalResult]) -> dict:
+def report(split: str, results: dict[str, EvalResult], pairs_wanted: list[tuple[str, str]]) -> dict:
     n = len(next(iter(results.values())).exact)
     print(f"\n=== BFCL {split} ({n} examples) ===")
     print(f"{'variant':<16}{'parses':>8}{'exact':>8}{'acc':>8}")
@@ -59,7 +78,7 @@ def report(split: str, results: dict[str, EvalResult]) -> dict:
 
     pairs = {}
     print(f"\n{'A vs B':<30}{'A only':>8}{'B only':>8}{'p':>8}   exact when both parse (n)")
-    for a, b in PAIRS:
+    for a, b in pairs_wanted:
         ra, rb = results[a], results[b]
         a_only = sum(x and not y for x, y in zip(ra.exact, rb.exact))
         b_only = sum(y and not x for x, y in zip(ra.exact, rb.exact))
@@ -83,9 +102,19 @@ def main() -> None:
     ap.add_argument("--checkpoint", required=True, help="Trained solver adapter directory")
     ap.add_argument("--splits", default="live_simple,simple")
     ap.add_argument("--n", type=int, default=None, help="Examples per split (default: all)")
+    ap.add_argument("--variants", default=DEFAULT_VARIANTS)
+    ap.add_argument("--pairs", default=None,
+                    help='Comparisons as "A:B,A:B" (default: trained/paper vs each base variant)')
     ap.add_argument("--out", default=None, help="Write results as JSON")
     a = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
+
+    variants = a.variants.split(",")
+    pairs = ([tuple(p.split(":")) for p in a.pairs.split(",")] if a.pairs
+             else [p for p in DEFAULT_PAIRS if p[0] in variants and p[1] in variants])
+    run_dir = Path(a.checkpoint).parent
+    run_cfg = Config.from_run(run_dir) if (run_dir / "state.json").exists() else Config()
+    print(f"prompt settings from the run: solver_prompt={run_cfg.solver_prompt}")
 
     data = {s: load_bfcl(split=s, n=a.n) for s in a.splits.split(",")}
     results: dict[str, dict[str, EvalResult]] = {s: {} for s in data}
@@ -93,19 +122,20 @@ def main() -> None:
     tok, trained, base_name = load_solver_for_eval(a.checkpoint)
     if base_name is None:
         raise SystemExit("Cannot determine the base model from the adapter config")
+    trained_variants = [v for v in variants if v.startswith("trained/")]
     for split, examples in data.items():
-        for fmt, r in evaluate(trained, tok, examples).items():
-            results[split][f"trained/{fmt}"] = r
+        results[split].update(evaluate(trained, tok, examples, run_cfg, trained_variants))
     del trained
     gc.collect()
     torch.cuda.empty_cache()
 
-    tok, base = load_base_model(base_name)
-    for split, examples in data.items():
-        for fmt, r in evaluate(base, tok, examples).items():
-            results[split][f"base/{fmt}"] = r
+    base_variants = [v for v in variants if v.startswith("base/")]
+    if base_variants:
+        tok, base = load_base_model(base_name)
+        for split, examples in data.items():
+            results[split].update(evaluate(base, tok, examples, run_cfg, base_variants))
 
-    summary = {split: report(split, res) for split, res in results.items()}
+    summary = {split: report(split, res, pairs) for split, res in results.items()}
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)

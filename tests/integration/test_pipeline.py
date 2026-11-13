@@ -239,3 +239,22 @@ class TestTaskPoolIntegration:
         # Should be sorted easy → hard (descending difficulty)
         difficulties = [e.difficulty for e in curriculum]
         assert difficulties == sorted(difficulties, reverse=True)
+
+
+class TestSolverPrompts:
+    def _prompt(self, **cfg_kwargs):
+        tok = MagicMock()
+        tok.apply_chat_template.side_effect = lambda msgs, **kw: json.dumps(msgs)
+        task = GeneratedTask(TaskSpec("math", "single-turn", 1, 1), "What is 2+2?", [], [])
+        return SolverAgent(MagicMock(), tok, Config(**cfg_kwargs)).build_prompt(task)
+
+    def test_tagged_prompt_wraps_query_and_tools(self):
+        prompt = self._prompt(solver_prompt="tagged")
+        assert "<question>What is 2+2?</question>" in prompt and "<available_tools>" in prompt
+
+    def test_labels_prompt(self):
+        prompt = self._prompt(solver_prompt="labels")
+        assert "User request: What is 2+2?" in prompt and "<question>" not in prompt
+
+    def test_answer_prefix_is_appended(self):
+        assert self._prompt(solver_answer_prefix="<think>\n</think>\n").endswith("<think>\n</think>\n")

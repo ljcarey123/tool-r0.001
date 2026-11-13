@@ -71,3 +71,20 @@ class TestSampleSpec:
         assert all(2 <= s.n_tools <= 8 for s in specs if s.n_calls == 1)
         assert max(s.n_tools for s in specs) == 8  # no cap from a fixed tool pool
         assert {s.context for s in specs} == {"single-turn"}
+
+
+class TestFromRun:
+    def _write_state(self, tmp_path, config):
+        import json
+        (tmp_path / "state.json").write_text(json.dumps({"config": config}))
+
+    def test_old_run_without_solver_prompt_uses_labels(self, tmp_path):
+        self._write_state(tmp_path, {"task_pool_size": 500, "small_menu": [2, 4]})
+        cfg = Config.from_run(tmp_path)
+        assert cfg.solver_prompt == "labels"
+        assert cfg.task_pool_size == 500 and cfg.small_menu == (2, 4)
+
+    def test_saved_prompt_and_overrides_win(self, tmp_path):
+        self._write_state(tmp_path, {"solver_prompt": "tagged", "unknown_old_field": 1})
+        cfg = Config.from_run(tmp_path, solver_format="qwen")
+        assert cfg.solver_prompt == "tagged" and cfg.solver_format == "qwen"

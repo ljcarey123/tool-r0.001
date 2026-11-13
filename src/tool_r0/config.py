@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
+import json
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .data.models import TaskSpec
 
@@ -39,6 +42,13 @@ class Config:
     # Solver answer format: "paper" (<think> + <tool_call_answer>[...]) or "qwen" (the model's
     # native chat-template tools prompt and <tool_call> blocks, as BFCL evaluates Qwen).
     solver_format: str = "paper"
+    # Paper-format Solver prompt: "tagged" follows the paper's template (Fig. 12: query and tools
+    # in <question> / <available_tools> tags); "labels" is the plain-label prompt used for the
+    # first full run. Both end with the format reminder (see agents/solver.py).
+    solver_prompt: str = "tagged"
+    # Text pre-filled at the start of the Solver's answer, e.g. "<think>\n</think>\n" to make it
+    # answer without reasoning (an evaluation ablation; empty during training).
+    solver_answer_prefix: str = ""
 
     # GRPO
     grpo_rollouts: int = 4
@@ -89,6 +99,20 @@ class Config:
             raise ValueError(f"Unknown preset {preset!r}; choose from {sorted(PRESETS)}")
         values = {**PRESETS[preset], **{k: v for k, v in overrides.items() if v is not None}}
         return cls(**values)
+
+    @classmethod
+    def from_run(cls, run_dir: str | Path, **overrides) -> "Config":
+        """The Config a training run was started with, read from its state.json.
+
+        Runs saved before `solver_prompt` existed used the plain-label prompt.
+        """
+        state = json.loads((Path(run_dir) / "state.json").read_text(encoding="utf-8"))
+        saved = state.get("config", {})
+        known = {f.name for f in dataclasses.fields(cls)}
+        values = {k: tuple(v) if isinstance(v, list) and k.endswith("_menu") else v
+                  for k, v in saved.items() if k in known}
+        values.setdefault("solver_prompt", "labels")
+        return cls(**{**values, **overrides})
 
     def sample_spec(self, rng: random.Random | None = None) -> TaskSpec:
         rng = rng or random.Random()

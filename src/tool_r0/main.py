@@ -88,8 +88,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
         logger.error("Unknown benchmark: %s", args.benchmark)
         sys.exit(1)
 
-    trained_config = Config(model_name=checkpoint)
-    base_config = Config(model_name=base_model)
+    # Evaluate both models with the prompt settings the checkpoint was trained with
+    run_dir = Path(checkpoint).parent
+    run_config = Config.from_run(run_dir) if (run_dir / "state.json").exists() else Config()
+    trained_config = base_config = run_config
 
     logger.info("Evaluating trained solver …")
     result_trained = run_eval(

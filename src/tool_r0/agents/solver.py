@@ -26,16 +26,20 @@ _SYSTEM_PROMPT = (
 
 # The closing format reminder is not in the paper's prompt. Without it the 0.5B base
 # model mostly answers in prose (2/16 parsed on valid eval tasks vs 13/16 with it).
-_USER_TEMPLATE = """\
-Available tools:
-{tools}
-
-User request: {question}
-
+_FORMAT_REMINDER = """\
 Answer in exactly this format:
 <think>which tool fits and which values from the request to use</think>
-<tool_call_answer>[{{"name": "<tool name>", "arguments": {{"<parameter>": <value copied from the request>}}}}]</tool_call_answer>
+<tool_call_answer>[{"name": "<tool name>", "arguments": {"<parameter>": <value copied from the request>}}]</tool_call_answer>
 """
+
+# User-message templates, selected by config.solver_prompt.
+_USER_TEMPLATES = {
+    # The paper's template (Fig. 12): query and tools wrapped in tags.
+    "tagged": "User Query:\n<question>{question}</question>\n\n"
+              "Available Tools (JSON):\n<available_tools>{tools}</available_tools>\n\n",
+    # Plain labels, as used for the first full run.
+    "labels": "Available tools:\n{tools}\n\nUser request: {question}\n\n",
+}
 
 # Semantic-coherence judge (paper Fig. 11): the Solver rates a generated task 1–5.
 _JUDGE_SYSTEM_PROMPT = (
@@ -122,19 +126,20 @@ class SolverAgent:
         if self.config.solver_format == "qwen":
             # Qwen2.5's chat template renders the tools and its own <tool_call> instructions
             tools = [{"type": "function", "function": t.to_dict()} for t in task.available_tools]
-            return self.tokenizer.apply_chat_template(
+            prompt = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": task.question}],
                 tools=tools, tokenize=False, add_generation_prompt=True,
             )
-        tools_json = json.dumps([t.to_dict() for t in task.available_tools], indent=2)
-        user_msg = _USER_TEMPLATE.format(tools=tools_json, question=task.question)
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ]
-        return self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        else:
+            tools_json = json.dumps([t.to_dict() for t in task.available_tools], indent=2)
+            user_msg = _USER_TEMPLATES[self.config.solver_prompt].format(
+                tools=tools_json, question=task.question
+            ) + _FORMAT_REMINDER
+            prompt = self.tokenizer.apply_chat_template(
+                [{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": user_msg}],
+                tokenize=False, add_generation_prompt=True,
+            )
+        return prompt + self.config.solver_answer_prefix
 
     def _sample(self, task: GeneratedTask, n: int) -> list[list[ToolCall] | None]:
         texts = generate_texts(
