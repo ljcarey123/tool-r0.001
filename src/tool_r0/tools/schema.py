@@ -33,8 +33,12 @@ class ToolCall(BaseModel):
         return data
 
     def canonical(self) -> str:
-        """Stable string representation for deduplication and matching."""
-        return f"{self.name}({json.dumps(self.parameters, sort_keys=True)})"
+        """Stable string representation for deduplication and matching.
+
+        `default=repr` covers non-JSON values that Python-literal parsing can produce from
+        model output, such as `...` (Ellipsis) or sets, instead of raising mid-training.
+        """
+        return f"{self.name}({json.dumps(self.parameters, sort_keys=True, default=repr)})"
 
     def __hash__(self) -> int:
         return hash(self.canonical())

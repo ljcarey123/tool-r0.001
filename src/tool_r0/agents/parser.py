@@ -98,7 +98,10 @@ def parse_calls(raw: str) -> list[ToolCall] | None:
         items = data if isinstance(data, list) else [data]
         if not items:
             return None
-        return [ToolCall(**_unwrap_call(c)) for c in items]
+        calls = [ToolCall(**_unwrap_call(c)) for c in items]
+        # Python-literal parsing can yield values a tool call cannot carry, e.g. `...`
+        json.dumps([c.parameters for c in calls])
+        return calls
     except Exception:
         return None
 

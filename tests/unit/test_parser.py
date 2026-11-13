@@ -145,3 +145,15 @@ class TestParseScore:
     def test_parse_score(self, text, expected):
         from tool_r0.agents.parser import parse_score
         assert parse_score(text) == expected
+
+
+class TestNonJsonValues:
+    def test_call_with_ellipsis_value_is_rejected(self):
+        # literal_eval turns a bare `...` into Ellipsis, which no tool call can carry
+        from tool_r0.agents.parser import parse_calls
+        assert parse_calls("[{'name': 'f', 'arguments': {'x': ...}}]") is None
+
+    def test_canonical_tolerates_non_json_values(self):
+        from tool_r0.tools.schema import ToolCall
+        call = ToolCall(name="f", parameters={"x": ...})
+        assert call == ToolCall(name="f", parameters={"x": ...})
