@@ -28,7 +28,37 @@ Both eval commands run the same benchmark against the untrained base model and p
 
 Tool-R0 trains a tool-calling agent from **zero annotated data** using self-play reinforcement learning. A Generator model proposes realistic tasks; a Solver model learns to answer them by selecting the right tools and parameters. Both models co-evolve via GRPO — no human labels, no SFT warm-up.
 
-The paper reports a **92.5% relative improvement** over the Qwen2.5-1.5B base model on standard tool-calling benchmarks.
+The paper roughly doubles Qwen2.5-0.5B-Instruct's tool-calling score (15.47 → 30.57 averaged over five benchmarks). This repo reproduces that size of gain at 0.5B on a 4 GB laptop GPU.
+
+## Results
+
+One full run (`--preset full`: 3 iterations × 50 Generator + 50 Solver GRPO steps) of
+Qwen2.5-0.5B-Instruct on an RTX 3050 Ti laptop GPU (4 GB). Training took about 10.5 hours.
+Each table compares the trained Solver with the untrained base model, using the same prompt.
+
+**BFCL `live_simple`** (first 100 examples, external benchmark, BFCL-style AST matching):
+
+| Metric | Base | Trained | Δ |
+|--------|------|---------|---|
+| Exact match (pass@1) | 0.29 | **0.58** | +0.29 (2.0×) |
+| Output parses to a tool call | 0.45 | 0.99 | +0.54 |
+| Shaped accuracy reward (0..1) | 0.38 | 0.78 | +0.41 |
+
+**Synthetic held-out set** (100 fully valid tasks from the untrained Generator, pass@1 exact match):
+
+| Base | Iteration 1 | Iteration 2 | Iteration 3 |
+|------|-------------|-------------|-------------|
+| 0.23 | 0.35 | 0.41 | **0.43** |
+
+The Generator improves alongside the Solver. Of 500 sampled tasks, the share that parse rose
+from about 17% for the base model to 55%, 90% and 95% over the three iterations. The
+curriculum grew from 77 to 124 tasks once cross-verification had filtered the pool.
+
+Caveats: this is a single run, so there are no error bars. The BFCL numbers are for the first
+100 `live_simple` examples, where every task has exactly one tool and one call. The paper
+instead averages five benchmarks, so the gains match in size but are not directly comparable.
+Most of the BFCL gain comes from the model reliably producing a parseable call. Among answers
+that parse, exact match goes from 64% (29/45) to 59% (58/99).
 
 ## Architecture
 
@@ -76,7 +106,8 @@ The parser accepts strict JSON, Python-literal syntax, code-fenced blocks and Op
 | KL β | 0 | 0.01 | Named adapters have no reference copy in TRL; ToolRL also found KL hurts |
 | Batch | 4 completions/step, back-propagated 1 at a time (`grpo_micro_batch`) | 24–32 | Memory: 2 at a time ran out of 4 GB on long generator completions |
 | Solver prompt | paper prompt + a closing format reminder | paper prompt | The 0.5B base model mostly answered in prose (2/16 valid tasks parsed vs 11/16) |
-| Task pool | 500 → 200 | 10k → 2k | Compute |
+| Task pool | 500 sampled, ≤200 kept | 10k → 2k | Compute |
+| Coherence judge (`r_sem`) | kept | same | At 0.5B the Solver rates almost every task 5/5, so in practice this adds a near-constant bonus to any parseable task |
 | Context | single-turn | 10% multi-turn | Scope |
 | Rollouts / temperature / iterations × steps | 4 / 1.0 / 3 × 50 | same | |
 
@@ -171,13 +202,15 @@ pytest tests/unit/        # unit only (no GPU needed)
 pytest tests/integration/ # integration (mocked models)
 ```
 
-## Phases
+## Scope and future work
 
-- **Phase 1** *(current)*: Core self-play loop — Generator + Solver co-evolving via GRPO. No tool execution; reward is structural JSON matching only. Verified against synthetic held-out eval and BFCL.
-- **Phase 2**: Benchmark evaluation on ToolBench / APIBench / BFCL.
-- **Phase 3**: Multi-step tool use (chained calls, dependency graphs).
+This repo covers the paper's single-turn self-play loop at 0.5B. Training is resumable: a
+checkpoint is written after each Generator phase and after each iteration. Not yet covered:
 
-See [Phases.md](Phases.md) for detailed plans.
+- The paper's other benchmarks and model sizes, and repeated runs for error bars
+- Multi-turn tasks (10% of the paper's task distribution) and multi-step tool use
+
+See [Phases.md](Phases.md) for earlier plans.
 
 ## References
 
