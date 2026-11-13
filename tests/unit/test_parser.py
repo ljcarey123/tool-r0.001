@@ -157,3 +157,22 @@ class TestNonJsonValues:
         from tool_r0.tools.schema import ToolCall
         call = ToolCall(name="f", parameters={"x": ...})
         assert call == ToolCall(name="f", parameters={"x": ...})
+
+
+class TestParseQwenToolCalls:
+    def test_one_block_per_call(self):
+        from tool_r0.agents.parser import parse_qwen_tool_calls
+        text = ('<tool_call>\n{"name": "a", "arguments": {"x": 1}}\n</tool_call>\n'
+                '<tool_call>\n{"name": "b", "arguments": {}}\n</tool_call>')
+        calls = parse_qwen_tool_calls(text)
+        assert calls is not None and [c.name for c in calls] == ["a", "b"]
+
+    def test_unclosed_final_block(self):
+        from tool_r0.agents.parser import parse_qwen_tool_calls
+        calls = parse_qwen_tool_calls('<tool_call>\n{"name": "a", "arguments": {"x": 1}}')
+        assert calls is not None and calls[0].parameters == {"x": 1}
+
+    @pytest.mark.parametrize("text", ["Please give me more details.", "<tool_call>\nnot json\n</tool_call>"])
+    def test_no_parseable_call(self, text):
+        from tool_r0.agents.parser import parse_qwen_tool_calls
+        assert parse_qwen_tool_calls(text) is None

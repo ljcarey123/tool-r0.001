@@ -36,6 +36,9 @@ class Config:
     p_high: float = 0.75
     sigma: float = 0.12
     semantic_reward: bool = True  # add r_sem: Solver judges task coherence (paper Fig. 11)
+    # Solver answer format: "paper" (<think> + <tool_call_answer>[...]) or "qwen" (the model's
+    # native chat-template tools prompt and <tool_call> blocks, as BFCL evaluates Qwen).
+    solver_format: str = "paper"
 
     # GRPO
     grpo_rollouts: int = 4

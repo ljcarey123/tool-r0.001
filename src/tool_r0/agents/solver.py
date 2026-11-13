@@ -112,7 +112,20 @@ class SolverAgent:
             repetition_penalty=self.config.repetition_penalty,
         )
 
+    def parse(self, text: str) -> list[ToolCall] | None:
+        """Parse an answer in this Solver's output format."""
+        if self.config.solver_format == "qwen":
+            return parser.parse_qwen_tool_calls(text)
+        return parser.parse_solver_output(text)
+
     def build_prompt(self, task: GeneratedTask) -> str:
+        if self.config.solver_format == "qwen":
+            # Qwen2.5's chat template renders the tools and its own <tool_call> instructions
+            tools = [{"type": "function", "function": t.to_dict()} for t in task.available_tools]
+            return self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": task.question}],
+                tools=tools, tokenize=False, add_generation_prompt=True,
+            )
         tools_json = json.dumps([t.to_dict() for t in task.available_tools], indent=2)
         user_msg = _USER_TEMPLATE.format(tools=tools_json, question=task.question)
         messages = [
@@ -136,4 +149,4 @@ class SolverAgent:
             repetition_penalty=self.config.repetition_penalty,
             num_return_sequences=n,
         )
-        return [parser.parse_solver_output(text) for text in texts]
+        return [self.parse(text) for text in texts]

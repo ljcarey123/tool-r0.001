@@ -118,3 +118,23 @@ class TestSolverFormatReward:
     def test_lenient_formats_score_one(self, answer):
         text = f"<think>thinking</think><tool_call_answer>{answer}</tool_call_answer>"
         assert solver_format_reward(text) == pytest.approx(1.0)
+
+
+class TestQwenSolverFormatReward:
+    """Same partial credit as the paper format, for Qwen's native <tool_call> blocks."""
+
+    def test_closed_parseable_block_scores_one(self):
+        from tool_r0.rewards.format import qwen_solver_format_reward
+        assert qwen_solver_format_reward('<tool_call>\n{"name": "a", "arguments": {}}\n</tool_call>') == pytest.approx(1.0)
+
+    def test_unclosed_block_loses_tag_credit(self):
+        from tool_r0.rewards.format import qwen_solver_format_reward
+        assert qwen_solver_format_reward('<tool_call>\n{"name": "a", "arguments": {}}') == pytest.approx(0.7)
+
+    def test_malformed_block_gets_tag_credit_only(self):
+        from tool_r0.rewards.format import qwen_solver_format_reward
+        assert qwen_solver_format_reward("<tool_call>\nnot json\n</tool_call>") == pytest.approx(0.3)
+
+    def test_prose_scores_zero(self):
+        from tool_r0.rewards.format import qwen_solver_format_reward
+        assert qwen_solver_format_reward("I need more details.") == pytest.approx(0.0)

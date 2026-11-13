@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from ..agents.parser import extract_tag, is_placeholder, load_lenient, parse_calls, parse_tools
+import re
+
+from ..agents.parser import (
+    extract_tag,
+    is_placeholder,
+    load_lenient,
+    parse_calls,
+    parse_qwen_tool_calls,
+    parse_tools,
+)
 
 # r_fmt = 0.3·I_tag + 0.3·I_parse + 0.4·I_norm — Tool-R0 Appendix (solver format reward).
 # The generator reuses the same weights; whether the paper weights the generator's
@@ -30,6 +39,28 @@ def generator_format_reward(text: str) -> float:
     if calls_raw and parse_calls(calls_raw) is not None:
         score += _W_NORM
 
+    return score
+
+
+def qwen_solver_format_reward(text: str) -> float:
+    """
+    The same partial credit for Qwen's native format:
+      I_tag   — at least one properly closed <tool_call>...</tool_call> block.
+      I_parse — every block parses (JSON / Python literal / fenced).
+      I_norm  — the answer normalises into at least one ToolCall.
+    """
+    blocks = re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL)
+    score = _W_TAG if blocks else 0.0
+    raw = blocks or [m.group(1) for m in re.finditer(r"<tool_call>(.*)\Z", text, re.DOTALL)]
+    if raw:
+        try:
+            for block in raw:
+                load_lenient(block)
+            score += _W_PARSE
+        except ValueError:
+            pass
+    if parse_qwen_tool_calls(text) is not None:
+        score += _W_NORM
     return score
 
 

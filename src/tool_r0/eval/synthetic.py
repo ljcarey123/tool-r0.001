@@ -71,12 +71,11 @@ def eval_pass_at_1(solver, tasks: list[GeneratedTask]) -> float:
     Greedy pass@1 accuracy: fraction of tasks where the solver's single greedy
     sample exactly matches the gold calls (same names and arguments).
     """
-    from ..agents.parser import parse_solver_output
     from ..rewards.curriculum import exact_match
 
     hits = 0
     for task, text in zip(tasks, solver.generate_greedy_batch(tasks)):
-        predicted = parse_solver_output(text)
+        predicted = solver.parse(text)
         if predicted is not None and exact_match(predicted, task.gold_calls):
             hits += 1
     return hits / len(tasks) if tasks else 0.0

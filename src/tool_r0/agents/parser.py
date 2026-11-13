@@ -136,6 +136,23 @@ def parse_score(text: str) -> int | None:
     return int(match.group()) if match else None
 
 
+def parse_qwen_tool_calls(text: str) -> list[ToolCall] | None:
+    """Parse Qwen2.5's native tool-calling output: one `<tool_call>{"name": ..., "arguments":
+    {...}}</tool_call>` block per call. A final unclosed block is accepted, as for the
+    paper format. Returns None if there is no parseable call."""
+    blocks = re.findall(r"<tool_call>(.*?)</tool_call>", text, re.DOTALL)
+    unclosed = re.search(r"<tool_call>((?:(?!<tool_call>|</tool_call>).)*)\Z", text, re.DOTALL)
+    if unclosed:
+        blocks.append(unclosed.group(1))
+    calls: list[ToolCall] = []
+    for block in blocks:
+        parsed = parse_calls(block)
+        if parsed is None:
+            return None  # one malformed call spoils the answer, as in the paper format
+        calls.extend(parsed)
+    return calls or None
+
+
 def parse_solver_output(text: str) -> list[ToolCall] | None:
     """
     Parse Solver LLM output into a list of ToolCall objects.

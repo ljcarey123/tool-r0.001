@@ -11,7 +11,7 @@ from .data.pool import TaskPool
 from .agents.generator import GeneratorAgent
 from .agents.solver import SolverAgent
 from .agents.parser import parse_generator_output
-from .rewards.format import generator_format_reward, solver_format_reward
+from .rewards.format import generator_format_reward, qwen_solver_format_reward, solver_format_reward
 from .rewards.validity import validity_reward
 from .rewards.curriculum import curriculum_reward
 from .rewards.accuracy import accuracy_reward
@@ -242,6 +242,10 @@ class SelfPlayLoop:
         ]
 
         config_ref = self.config
+        solver_ref = self.solver
+        format_reward = (
+            qwen_solver_format_reward if self.config.solver_format == "qwen" else solver_format_reward
+        )
 
         def reward_fn(
             prompts_batch: list[str],
@@ -251,10 +255,9 @@ class SelfPlayLoop:
         ) -> list[float]:
             rewards, fmt, acc = [], [], []
             for i, completion in enumerate(completions):
-                r_fmt = solver_format_reward(completion)
+                r_fmt = format_reward(completion)
                 fmt.append(r_fmt)
-                from .agents.parser import parse_solver_output
-                predicted = parse_solver_output(completion)
+                predicted = solver_ref.parse(completion)
                 if predicted is None or gold_calls is None or i >= len(gold_calls):
                     rewards.append(r_fmt)
                     continue
