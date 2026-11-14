@@ -68,6 +68,10 @@ class TaskPool:
         Bucket into easy / medium / hard, select a balanced n,
         sort easy→hard for curriculum ordering.
         """
+        if self.config.drop_solved_tasks:
+            solved = sum(e.difficulty >= 1.0 for e in examples)
+            examples = [e for e in examples if e.difficulty < 1.0]
+            logger.info("Curriculum: dropped %d tasks solved in every sample", solved)
         easy   = [e for e in examples if e.difficulty > self.config.p_high]
         medium = [e for e in examples if self.config.p_low <= e.difficulty <= self.config.p_high]
         hard   = [e for e in examples if e.difficulty < self.config.p_low]

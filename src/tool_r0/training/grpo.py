@@ -32,7 +32,9 @@ class GRPOTrainer:
         self.config = config
         self.extra_columns = extra_columns or {}
 
-    def train(self, prompts: list[str], n_steps: int, max_completion_length: int) -> None:
+    def train(
+        self, prompts: list[str], n_steps: int, max_completion_length: int, prompts_per_step: int = 1
+    ) -> None:
         from datasets import Dataset
         from trl import GRPOConfig, GRPOTrainer as TRLGRPOTrainer  # type: ignore[attr-defined]
 
@@ -41,11 +43,11 @@ class GRPOTrainer:
 
         # Wrap our reward_fn into TRL's expected signature:
         #   fn(completions: list[str], **kwargs) -> list[float]
-        # TRL passes dataset columns (including "prompts") via kwargs.
+        # TRL passes the prompts as "prompts" and dataset columns via kwargs.
         reward_fn = self.reward_fn
 
         def trl_reward_fn(completions: list[str], **kwargs) -> list[float | None]:
-            prompts_batch = kwargs.get("prompt", [""] * len(completions))
+            prompts_batch = kwargs.get("prompts", [""] * len(completions))
             extra = {k: kwargs[k] for k in self.extra_columns if k in kwargs}
             try:
                 return reward_fn(prompts_batch, completions, **extra)  # type: ignore[return-value]
@@ -69,17 +71,18 @@ class GRPOTrainer:
         use_fp16 = use_cuda and not use_bf16
 
         rollouts, micro = self.config.grpo_rollouts, self.config.grpo_micro_batch
-        if rollouts % micro:
-            raise ValueError(f"grpo_rollouts ({rollouts}) must be divisible by grpo_micro_batch ({micro})")
+        completions = rollouts * prompts_per_step
+        if completions % micro:
+            raise ValueError(f"completions per step ({completions}) must be divisible by grpo_micro_batch ({micro})")
 
         grpo_config = GRPOConfig(
             output_dir="./grpo_output",
             max_steps=n_steps,
-            # Batch size counts completions: one prompt x its rollouts per step, split into
-            # micro-batches by gradient accumulation (TRL generates the whole group at once).
-            # Tying it to num_generations keeps it valid however few prompts the curriculum yields.
+            # Batch size counts completions: prompts_per_step prompts x their rollouts per step,
+            # split into micro-batches by gradient accumulation (TRL generates the whole batch at
+            # once). Tying it to num_generations keeps it valid however few prompts there are.
             per_device_train_batch_size=micro,
-            gradient_accumulation_steps=rollouts // micro,
+            gradient_accumulation_steps=completions // micro,
             num_generations=rollouts,
             temperature=self.config.grpo_temperature,
             max_completion_length=max_completion_length,

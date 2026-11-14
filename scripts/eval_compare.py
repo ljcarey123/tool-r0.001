@@ -99,7 +99,11 @@ def report(split: str, results: dict[str, EvalResult], pairs_wanted: list[tuple[
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", required=True, help="Trained solver adapter directory")
+    ap.add_argument("--checkpoint", default=None, help="Trained solver adapter directory")
+    ap.add_argument("--base-model", default=None,
+                    help="Base model to evaluate when there is no checkpoint (base/* variants only)")
+    ap.add_argument("--batch-size", type=int, default=None,
+                    help="Prompts per generate() call (lower it for larger models on small GPUs)")
     ap.add_argument("--splits", default="live_simple,simple")
     ap.add_argument("--n", type=int, default=None, help="Examples per split (default: all)")
     ap.add_argument("--variants", default=DEFAULT_VARIANTS)
@@ -112,22 +116,29 @@ def main() -> None:
     variants = a.variants.split(",")
     pairs = ([tuple(p.split(":")) for p in a.pairs.split(",")] if a.pairs
              else [p for p in DEFAULT_PAIRS if p[0] in variants and p[1] in variants])
-    run_dir = Path(a.checkpoint).parent
-    run_cfg = Config.from_run(run_dir) if (run_dir / "state.json").exists() else Config()
-    print(f"prompt settings from the run: solver_prompt={run_cfg.solver_prompt}")
+    if a.checkpoint is None and (a.base_model is None or any(v.startswith("trained/") for v in variants)):
+        raise SystemExit("Without --checkpoint, pass --base-model and only base/* variants")
+    run_dir = Path(a.checkpoint).parent if a.checkpoint else None
+    run_cfg = Config.from_run(run_dir) if run_dir and (run_dir / "state.json").exists() else Config()
+    if a.batch_size:
+        run_cfg = dataclasses.replace(run_cfg, generation_batch_size=a.batch_size)
+    print(f"prompt settings: solver_prompt={run_cfg.solver_prompt}")
 
     data = {s: load_bfcl(split=s, n=a.n) for s in a.splits.split(",")}
     results: dict[str, dict[str, EvalResult]] = {s: {} for s in data}
 
-    tok, trained, base_name = load_solver_for_eval(a.checkpoint)
+    base_name = a.base_model
+    if a.checkpoint:
+        tok, trained, adapter_base = load_solver_for_eval(a.checkpoint)
+        base_name = base_name or adapter_base
+        trained_variants = [v for v in variants if v.startswith("trained/")]
+        for split, examples in data.items():
+            results[split].update(evaluate(trained, tok, examples, run_cfg, trained_variants))
+        del trained
+        gc.collect()
+        torch.cuda.empty_cache()
     if base_name is None:
         raise SystemExit("Cannot determine the base model from the adapter config")
-    trained_variants = [v for v in variants if v.startswith("trained/")]
-    for split, examples in data.items():
-        results[split].update(evaluate(trained, tok, examples, run_cfg, trained_variants))
-    del trained
-    gc.collect()
-    torch.cuda.empty_cache()
 
     base_variants = [v for v in variants if v.startswith("base/")]
     if base_variants:

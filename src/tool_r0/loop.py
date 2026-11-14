@@ -279,6 +279,7 @@ class SelfPlayLoop:
                 prompts,
                 n_steps=self.config.solver_steps,
                 max_completion_length=self.config.solver_max_tokens,
+                prompts_per_step=self.config.solver_prompts_per_step,
             )
 
 

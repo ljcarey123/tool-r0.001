@@ -65,6 +65,17 @@ class TestBuildCurriculum:
     def test_empty_returns_empty(self):
         assert TaskPool(_CFG).build_curriculum([], n=10) == []
 
+    def test_tasks_solved_in_every_sample_are_dropped(self):
+        examples = [self._example(d) for d in [1.0, 1.0, 0.875, 0.5, 0.125]]
+        curriculum = TaskPool(_CFG).build_curriculum(examples, n=6)
+        assert [e.difficulty for e in curriculum] == [0.875, 0.5, 0.125]
+
+    def test_solved_tasks_kept_when_disabled(self):
+        from dataclasses import replace
+        examples = [self._example(d) for d in [1.0, 0.5]]
+        curriculum = TaskPool(replace(_CFG, drop_solved_tasks=False)).build_curriculum(examples, n=6)
+        assert 1.0 in [e.difficulty for e in curriculum]
+
 
 class TestCrossVerify:
     def test_discards_unsolvable_tasks(self):

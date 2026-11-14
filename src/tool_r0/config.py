@@ -56,6 +56,12 @@ class Config:
     # step still trains on one group of `grpo_rollouts`. On a 4 GB GPU, 2 ran out of memory
     # on long generator completions; raise it on bigger GPUs for speed.
     grpo_micro_batch: int = 1
+    # Curriculum tasks per Solver GRPO step (each with grpo_rollouts completions). With 1, a
+    # 50-step phase saw fewer tasks than its own curriculum; the paper's batch is ~6-8 tasks.
+    solver_prompts_per_step: int = 4
+    # Leave tasks the Solver already solves in every cross-verification sample out of its
+    # curriculum: all-correct GRPO groups have zero advantage and teach nothing.
+    drop_solved_tasks: bool = True
     grpo_temperature: float = 1.0   # temperature used during GRPO rollouts
     generation_temperature: float = 0.7  # temperature for inference outside of GRPO (curriculum, eval)
     repetition_penalty: float = 1.0  # >1 penalises the repeated braces/quotes/keys that JSON needs
