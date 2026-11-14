@@ -28,37 +28,80 @@ Both eval commands run the same benchmark against the untrained base model and p
 
 Tool-R0 trains a tool-calling agent from **zero annotated data** using self-play reinforcement learning. A Generator model proposes realistic tasks; a Solver model learns to answer them by selecting the right tools and parameters. Both models co-evolve via GRPO — no human labels, no SFT warm-up.
 
-The paper roughly doubles Qwen2.5-0.5B-Instruct's tool-calling score (15.47 → 30.57 averaged over five benchmarks). This repo reproduces that size of gain at 0.5B on a 4 GB laptop GPU.
+The paper reports roughly doubling Qwen2.5-0.5B-Instruct's tool-calling score (15.47 → 30.57,
+averaged over five benchmarks). This repo reproduces the paper's training loop on a 4 GB laptop
+GPU and checks where that gain comes from.
 
 ## Results
 
-One full run (`--preset full`: 3 iterations × 50 Generator + 50 Solver GRPO steps) of
-Qwen2.5-0.5B-Instruct on an RTX 3050 Ti laptop GPU (4 GB). Training took about 10.5 hours.
-Each table compares the trained Solver with the untrained base model, using the same prompt.
+**Summary.** At 0.5B, the self-play loop reproduces the paper's reported size of gain, but on a
+fair comparison the gain is entirely the model learning the output format. Accuracy did not
+improve. A two-token prompt prefix gives the untrained model the same score, and the trained-in
+reasoning step does not help.
 
-**BFCL `live_simple`** (first 100 examples, external benchmark, BFCL-style AST matching):
+Setup: one full run (`--preset full`, 3 iterations × 50 Generator + 50 Solver GRPO steps) of
+Qwen2.5-0.5B-Instruct on an RTX 3050 Ti laptop GPU (4 GB), about 10.5 hours. Evaluation uses all
+of BFCL `live_simple` (258 examples) and `simple` (400), scored with BFCL-style AST matching.
+Decoding is greedy. Comparisons are paired, on the same examples, with McNemar's test.
 
-| Metric | Base | Trained | Δ |
-|--------|------|---------|---|
-| Exact match (pass@1) | 0.29 | **0.58** | +0.29 (2.0×) |
-| Output parses to a tool call | 0.45 | 0.99 | +0.54 |
-| Shaped accuracy reward (0..1) | 0.38 | 0.78 | +0.41 |
+### 1. Against its own training format, the trained model looks twice as good
 
-**Synthetic held-out set** (100 fully valid tasks from the untrained Generator, pass@1 exact match):
+| Exact match | Base (paper format) | Trained (paper format) |
+|---|---|---|
+| BFCL `live_simple` | 0.264 | **0.512** |
+| BFCL `simple` | 0.502 | **0.765** |
+| Synthetic held-out set (100 tasks) | 0.23 | **0.43** (0.35 → 0.41 → 0.43 by iteration) |
 
-| Base | Iteration 1 | Iteration 2 | Iteration 3 |
-|------|-------------|-------------|-------------|
-| 0.23 | 0.35 | 0.41 | **0.43** |
+This is the comparison the paper reports. The base model is given the paper's
+`<think>` / `<tool_call_answer>` format, which it was never trained on, and it often fails to
+produce a parseable answer: only 50% (`live_simple`) and 63% (`simple`) of its answers parse.
 
-The Generator improves alongside the Solver. Of 500 sampled tasks, the share that parse rose
-from about 17% for the base model to 55%, 90% and 95% over the three iterations. The
-curriculum grew from 77 to 124 tasks once cross-verification had filtered the pool.
+### 2. Against a fair baseline, there is no gain
 
-Caveats: this is a single run, so there are no error bars. The BFCL numbers are for the first
-100 `live_simple` examples, where every task has exactly one tool and one call. The paper
-instead averages five benchmarks, so the gains match in size but are not directly comparable.
-Most of the BFCL gain comes from the model reliably producing a parseable call. Among answers
-that parse, exact match goes from 64% (29/45) to 59% (58/99).
+| Exact match | Base, Qwen's own tool format | Base + empty `<think>` pre-filled | Trained |
+|---|---|---|---|
+| BFCL `live_simple` | 0.508 | 0.516 | 0.512 |
+| BFCL `simple` | **0.830** | 0.757 | 0.765 |
+
+- **Base model in its own built-in tool-calling format** (how BFCL evaluates Qwen): the trained
+  model ties on `live_simple` (31 vs 30 examples only one model gets right, p = 1.0) and is
+  worse on `simple` (8 vs 34, p < 0.001).
+- **Only answers that parse:** the trained and base models are equally accurate (0.535 vs 0.535
+  on `live_simple`; 0.787 vs 0.803 on `simple`).
+- **Base model with `<think>
+</think>
+` pre-filled at the start of its answer:** it parses 97–98%
+  of the time and matches the trained model. The roughly 10.5 hours of training bought what two
+  tokens of prompt do.
+
+### 3. The reasoning step does not help at 0.5B
+
+The trained Solver always writes a `<think>` block. Pre-filling an empty one, so that it answers
+directly, scores *higher* on `live_simple` (0.581 vs 0.512; 25 vs 7, p = 0.002) and the same on
+`simple` (0.780 vs 0.765, p = 0.18).
+
+### What this means for the paper's 0.5B result
+
+The paper does not say how base models were prompted at evaluation, nor how unparseable answers
+were scored. Its 0.5B base scores are very low on some benchmarks (1.57 on SNIPS, 4.71 on
+NexusRaven), which is what format failures would look like, and the paper reports that format
+rewards rise faster than accuracy. If its base models were evaluated in the custom format, its
+0.5B gains may largely be format learning, as ours are. This is a possibility the paper's text
+leaves open, not a demonstrated flaw: our setup differs (LoRA, a smaller batch and task pool, one
+run), and the effect should be weaker for the paper's main 1.5B and 3B models.
+
+### Other observations
+
+- The Generator does learn: of 500 sampled tasks, the share that parse rose from about 17% for
+  the base model to 55%, 90% and 95% over the three iterations.
+- In the first full run the Solver saw just one task per GRPO step, i.e. 50 tasks per iteration,
+  fewer than its own curriculum, and about half the curriculum was tasks it already solved every
+  time (zero learning signal in GRPO). The defaults now train on 4 tasks per step and drop
+  always-solved tasks. A second run with these settings will test whether a real gain appears.
+- The paper's tagged prompt template (Fig. 12) makes the base model parse more often than the
+  plain-label prompt used in the first run (0.50 → 0.76 on `live_simple`). It is now the default.
+
+Reproduce the comparisons with `scripts/eval_compare.py` (see its docstring).
 
 ## Architecture
 
@@ -191,8 +234,16 @@ The synthetic eval uses 100 tasks generated from the base generator before train
 and saved to `checkpoints/eval_set.json`. Pass@1 exact match is reported before training
 starts and after each iteration in the training log, so you can track improvement in real time.
 
-BFCL (`live_simple` split) provides out-of-distribution validation with fully structured
-gold calls (tool name + arguments), giving a meaningful accuracy score across all dimensions.
+BFCL (`live_simple` by default, `--bfcl-split simple` also works) provides out-of-distribution
+validation with structured gold answers, scored by BFCL-style AST matching.
+
+Both commands use the same prompt for the base model as for the trained one, which favours the
+trained model on format (see Results). For a fair comparison, including the base model in Qwen's
+own tool-calling format, use:
+
+```bash
+python scripts/eval_compare.py --checkpoint ./checkpoints/solver --splits live_simple,simple
+```
 
 ## Tests
 
