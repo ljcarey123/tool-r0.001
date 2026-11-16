@@ -56,6 +56,12 @@ class GRPOTrainer:
                 # should score 0, not end a long training run. Rescore one at a time.
                 logger.exception("Reward function failed; rescoring completions individually")
                 return [_score_one(i, prompts_batch, completions, extra) for i in range(len(completions))]
+            finally:
+                # The Generator's curriculum reward samples the Solver mid-step. Releasing that
+                # cached memory before the backward pass avoids out-of-memory errors on a 4 GB
+                # GPU, where the vocabulary-sized logits need a large contiguous block.
+                if use_cuda:
+                    torch.cuda.empty_cache()
 
         def _score_one(i: int, prompts_batch, completions, extra) -> float:
             try:
