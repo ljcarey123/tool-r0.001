@@ -188,8 +188,9 @@ The parser accepts strict JSON, Python-literal syntax, code-fenced blocks and Op
 | Fine-tuning | LoRA r=16, α=32 | Full | Fits a 4 GB GPU |
 | Learning rate | 2e-5 | 1e-6 | LoRA needs a higher rate |
 | KL β | 0 | 0.01 | Named adapters have no reference copy in TRL; ToolRL also found KL hurts |
-| Batch | 4 completions/step, back-propagated 1 at a time (`grpo_micro_batch`) | 24–32 | Memory: 2 at a time ran out of 4 GB on long generator completions |
-| Solver prompt | paper prompt + a closing format reminder | paper prompt | The 0.5B base model mostly answered in prose (2/16 valid tasks parsed vs 11/16) |
+| Batch | Generator 4 completions/step (1 task); Solver 16 (4 tasks × 4). Back-propagated 1 at a time (`grpo_micro_batch`) | 24–32 | Memory: 2 at a time ran out of 4 GB on long generator completions. Run 1's Solver used 1 task/step |
+| Solver prompt | paper's tagged prompt (Fig. 12) + a closing format reminder | paper's tagged prompt | The 0.5B base model mostly answered in prose (2/16 valid tasks parsed vs 11/16). Run 1 used plain labels instead of tags |
+| Curriculum | tasks the Solver always solves are dropped | not stated | They give GRPO zero learning signal. Run 1 kept them |
 | Task pool | 500 sampled, ≤200 kept | 10k → 2k | Compute |
 | Coherence judge (`r_sem`) | kept | same | At 0.5B the Solver rates almost every task 5/5, so in practice this adds a near-constant bonus to any parseable task |
 | Context | single-turn | 10% multi-turn | Scope |
