@@ -97,6 +97,26 @@ def report(split: str, results: dict[str, EvalResult], pairs_wanted: list[tuple[
     }
 
 
+def save_outputs(path: str, data: dict, results: dict[str, dict[str, EvalResult]]) -> None:
+    """Write each example's question, tools, ground truth and every variant's output."""
+    out = {}
+    for split, examples in data.items():
+        out[split] = [
+            {
+                "question": task.question,
+                "tools": [t.model_dump() for t in task.available_tools],
+                "ground_truth": task.ground_truth,
+                "outputs": {
+                    v: {"text": r.outputs[i], "parsed": r.parsed[i], "exact": r.exact[i]}
+                    for v, r in results[split].items()
+                },
+            }
+            for i, task in enumerate(examples)
+        ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default=None, help="Trained solver adapter directory")
@@ -110,6 +130,8 @@ def main() -> None:
     ap.add_argument("--pairs", default=None,
                     help='Comparisons as "A:B,A:B" (default: trained/paper vs each base variant)')
     ap.add_argument("--out", default=None, help="Write results as JSON")
+    ap.add_argument("--save-outputs", default=None,
+                    help="Write every example with each variant's raw output as JSON (for docs/)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
@@ -150,6 +172,8 @@ def main() -> None:
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
+    if a.save_outputs:
+        save_outputs(a.save_outputs, data, results)
 
 
 if __name__ == "__main__":

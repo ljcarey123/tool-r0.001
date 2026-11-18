@@ -22,6 +22,7 @@ class EvalResult:
     accuracy: float      # mean shaped accuracy reward, 0..1 (partial credit per call)
     parsed: list[bool] = field(default_factory=list)  # per example, for paired comparisons
     exact: list[bool] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)  # raw model text, per example
 
 
 def run_eval(
@@ -41,11 +42,13 @@ def run_eval(
     subset = examples[:n]
     parsed: list[bool] = []
     exact: list[bool] = []
+    outputs: list[str] = []
     accuracy_total = 0.0
 
     logger.info("Evaluating %d examples", len(subset))
     for task, text in zip(subset, solver.generate_greedy_batch(subset)):
         predicted = solver.parse(text)
+        outputs.append(text)
 
         parsed.append(predicted is not None)
         exact.append(predicted is not None and match(task, predicted))
@@ -60,4 +63,5 @@ def run_eval(
         accuracy=accuracy_total / n_eval if n_eval else 0.0,
         parsed=parsed,
         exact=exact,
+        outputs=outputs,
     )

@@ -2,6 +2,8 @@
 
 A reimplementation of [Tool-R0: Self-Evolving LLM Agents for Tool-Learning from Zero Data](https://arxiv.org/pdf/2602.21320), incorporating reward design findings from the companion [ToolRL paper](https://arxiv.org/html/2504.13958v1).
 
+**[Explore the architecture and results →](https://ljcarey123.github.io/tool-r0.001/)** (source in [docs/](docs/), served by GitHub Pages)
+
 ## Quick start
 
 ```bash
@@ -36,8 +38,8 @@ GPU and checks where that gain comes from.
 
 **Summary.** At 0.5B, the self-play loop reproduces the paper's reported size of gain, but on a
 fair comparison the gain is entirely the model learning the output format. Accuracy did not
-improve. A two-token prompt prefix gives the untrained model the same score, and the trained-in
-reasoning step does not help. A second run that gave the Solver 4× more training signal gave the
+improve. A two-token prompt prefix gives the untrained model the same score, and the trained
+model's reasoning step is empty boilerplate. A second run that gave the Solver 4× more training signal gave the
 same result. At 1.5B, the base model already handles the paper's format and its reasoning step
 helps, so 1.5B is where a real gain could show up.
 
@@ -75,11 +77,18 @@ produce a parseable answer: only 50% (`live_simple`) and 63% (`simple`) of its a
   of the time and matches the trained model. The roughly 10.5 hours of training bought what two
   tokens of prompt do.
 
-### 3. The reasoning step does not help at 0.5B
+### 3. The trained model does not reason
 
-The trained Solver always writes a `<think>` block. Pre-filling an empty one, so that it answers
-directly, scores *higher* on `live_simple` (0.581 vs 0.512; 25 vs 7, p = 0.002) and the same on
-`simple` (0.780 vs 0.765, p = 0.18).
+The trained Solver always writes a `<think>` block, but there is no reasoning in it:
+
+- **Run 1** writes only the name of the function it is about to call (e.g. `get_current_weather`).
+- **Run 2** writes `This is my reasoning.` in all 658 BFCL answers. That is the placeholder text
+  from the format example at the end of the prompt.
+
+Self-play rewarded the format and the answer, not the reasoning, so the reasoning collapsed to
+the cheapest text that satisfies the format. Pre-filling an empty `<think>` block, so that run 1's
+model answers directly, scores *higher* on `live_simple` (0.581 vs 0.512; 25 vs 7, p = 0.002) and
+the same on `simple` (0.780 vs 0.765, p = 0.18).
 
 ### 4. More Solver training signal: the same result
 
@@ -100,9 +109,8 @@ Run 2's baseline columns use the tagged prompt, so they differ slightly from sec
 - The synthetic held-out score went 0.30 → 0.41 → 0.40 → 0.40. All the gain came in iteration 1,
   even though the Solver went on to solve more and more of its own tasks every time (19, 102 and
   162 tasks dropped from the curriculum as always solved).
-- One change: pre-filling an empty `<think>` block no longer helps the trained model
-  (0.761 vs 0.757, p = 1.0). Training stopped the reasoning step from hurting but did not make
-  it useful.
+- Pre-filling an empty `<think>` block no longer changes run 2's score (0.761 vs 0.757,
+  p = 1.0), as expected when its `<think>` block is always the same placeholder sentence.
 
 ### 5. At 1.5B, there is no format gap, and reasoning helps
 

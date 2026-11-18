@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool-R0 Explorer</title>
+  <meta name="description" content="Architecture and results of a Tool-R0 self-play reproduction on Qwen2.5-0.5B.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%232a78d6' stroke-width='2'/><path d='M8 2v6l4 2' stroke='%232a78d6' stroke-width='2' fill='none'/></svg>">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/charts.css">
+  <link rel="stylesheet" href="css/sections.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <nav class="topbar" aria-label="Sections">
+    <div class="page topbar__inner">
+      <a class="topbar__brand" href="#top">Tool-R0</a>
+      <div class="topbar__nav">
+        <a href="#architecture">Architecture</a>
+        <a href="#results">Results</a>
+        <a href="#training">Training</a>
+        <a href="#examples">Examples</a>
+      </div>
+      <div class="topbar__end">
+        <button class="icon-button" type="button" data-theme-toggle aria-label="Toggle dark mode">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg>
+        </button>
+        <a class="icon-button" href="https://github.com/ljcarey123/tool-r0.001" aria-label="Source on GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="page" id="app">
+    <p class="muted" style="padding: 72px 0">Loading…</p>
+  </main>
+
+  <footer class="page footer">
+    Reproduction of <a href="https://arxiv.org/abs/2602.21320">Tool-R0 (arXiv 2602.21320)</a>.
+    Data generated from the training logs by <code>scripts/build_explorer_data.py</code>.
+    <noscript>This page needs JavaScript; the same results are in the README.</noscript>
+  </footer>
+</body>
+</html>
