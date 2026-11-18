@@ -37,10 +37,13 @@ GPU and checks where that gain comes from.
 **Summary.** At 0.5B, the self-play loop reproduces the paper's reported size of gain, but on a
 fair comparison the gain is entirely the model learning the output format. Accuracy did not
 improve. A two-token prompt prefix gives the untrained model the same score, and the trained-in
-reasoning step does not help.
+reasoning step does not help. A second run that gave the Solver 4× more training signal gave the
+same result. At 1.5B, the base model already handles the paper's format and its reasoning step
+helps, so 1.5B is where a real gain could show up.
 
-Setup: one full run (`--preset full`, 3 iterations × 50 Generator + 50 Solver GRPO steps) of
-Qwen2.5-0.5B-Instruct on an RTX 3050 Ti laptop GPU (4 GB), about 10.5 hours. Evaluation uses all
+Setup: two full runs (`--preset full`, 3 iterations × 50 Generator + 50 Solver GRPO steps) of
+Qwen2.5-0.5B-Instruct on an RTX 3050 Ti laptop GPU (4 GB), about 10.5 hours of compute each.
+Sections 1–3 describe run 1 and section 4 run 2. Evaluation uses all
 of BFCL `live_simple` (258 examples) and `simple` (400), scored with BFCL-style AST matching.
 Decoding is greedy. Comparisons are paired, on the same examples, with McNemar's test.
 
@@ -68,9 +71,7 @@ produce a parseable answer: only 50% (`live_simple`) and 63% (`simple`) of its a
   worse on `simple` (8 vs 34, p < 0.001).
 - **Only answers that parse:** the trained and base models are equally accurate (0.535 vs 0.535
   on `live_simple`; 0.787 vs 0.803 on `simple`).
-- **Base model with `<think>
-</think>
-` pre-filled at the start of its answer:** it parses 97–98%
+- **Base model with an empty `<think></think>` block pre-filled at the start of its answer:** it parses 97–98%
   of the time and matches the trained model. The roughly 10.5 hours of training bought what two
   tokens of prompt do.
 
@@ -79,6 +80,49 @@ produce a parseable answer: only 50% (`live_simple`) and 63% (`simple`) of its a
 The trained Solver always writes a `<think>` block. Pre-filling an empty one, so that it answers
 directly, scores *higher* on `live_simple` (0.581 vs 0.512; 25 vs 7, p = 0.002) and the same on
 `simple` (0.780 vs 0.765, p = 0.18).
+
+### 4. More Solver training signal: the same result
+
+Run 1's Solver saw one task per GRPO step, and about half its curriculum was tasks it already
+solved every time, which give GRPO nothing to learn from. Run 2 trains on 4 tasks per step, drops
+always-solved tasks, and uses the paper's tagged prompt (Fig. 12).
+
+| Exact match | Base, Qwen format | Base + empty `<think>` | Trained, run 1 | Trained, run 2 |
+|---|---|---|---|---|
+| BFCL `live_simple` | 0.508 | 0.504 | 0.512 | **0.527** |
+| BFCL `simple` | **0.830** | 0.748 | 0.765 | 0.733 |
+
+Run 2's baseline columns use the tagged prompt, so they differ slightly from section 2.
+
+- Run 2 vs the base model with an empty `<think>` block: p = 0.36 (`live_simple`) and 0.42
+  (`simple`). On answers that parse for both, accuracy is identical (0.603 vs 0.603) or slightly
+  lower (0.747 vs 0.762).
+- The synthetic held-out score went 0.30 → 0.41 → 0.40 → 0.40. All the gain came in iteration 1,
+  even though the Solver went on to solve more and more of its own tasks every time (19, 102 and
+  162 tasks dropped from the curriculum as always solved).
+- One change: pre-filling an empty `<think>` block no longer helps the trained model
+  (0.761 vs 0.757, p = 1.0). Training stopped the reasoning step from hurting but did not make
+  it useful.
+
+### 5. At 1.5B, there is no format gap, and reasoning helps
+
+An evaluation of the untrained Qwen2.5-1.5B-Instruct (the paper's main model) on the first 200
+examples of each split, using the run-1 prompt:
+
+| Exact match | Paper format, with reasoning | Paper format, empty `<think>` | Qwen's own format |
+|---|---|---|---|
+| BFCL `live_simple` | **0.680** | 0.570 | 0.640 |
+| BFCL `simple` | 0.905 | 0.850 | **0.925** |
+
+- **The 1.5B model already produces the paper's format.** 92.5% (`live_simple`) and 99.5%
+  (`simple`) of its answers parse, so a gain from training could not come from format learning.
+- **Reasoning helps.** Removing the reasoning step costs 11 points on `live_simple` (33 vs 11
+  examples, p = 0.001) and 5.5 on `simple` (p = 0.02). At 0.5B it made no difference or hurt.
+- **The paper's format with reasoning matches Qwen's own format** (0.680 vs 0.640 and 0.905 vs
+  0.925).
+
+1.5B is therefore the size where self-play could show a real gain. Training it does not fit in
+4 GB, so it is left as future work.
 
 ### What this means for the paper's 0.5B result
 
@@ -94,10 +138,7 @@ run), and the effect should be weaker for the paper's main 1.5B and 3B models.
 
 - The Generator does learn: of 500 sampled tasks, the share that parse rose from about 17% for
   the base model to 55%, 90% and 95% over the three iterations.
-- In the first full run the Solver saw just one task per GRPO step, i.e. 50 tasks per iteration,
-  fewer than its own curriculum, and about half the curriculum was tasks it already solved every
-  time (zero learning signal in GRPO). The defaults now train on 4 tasks per step and drop
-  always-solved tasks. A second run with these settings will test whether a real gain appears.
+- In run 2, 470 and 487 of 500 sampled tasks were valid in iterations 2 and 3.
 - The paper's tagged prompt template (Fig. 12) makes the base model parse more often than the
   plain-label prompt used in the first run (0.50 → 0.76 on `live_simple`). It is now the default.
 
@@ -258,7 +299,9 @@ pytest tests/integration/ # integration (mocked models)
 This repo covers the paper's single-turn self-play loop at 0.5B. Training is resumable: a
 checkpoint is written after each Generator phase and after each iteration. Not yet covered:
 
-- The paper's other benchmarks and model sizes, and repeated runs for error bars
+- Training at 1.5B, where section 5 suggests a real gain is possible (needs more than 4 GB;
+  `modal_app.py` runs training on a cloud GPU)
+- The paper's other benchmarks, and repeated runs for error bars
 - Multi-turn tasks (10% of the paper's task distribution) and multi-step tool use
 
 See [Phases.md](Phases.md) for earlier plans.
